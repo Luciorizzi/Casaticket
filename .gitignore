@@ -1,0 +1,17 @@
+node_modules
+.turbo
+.next
+.expo
+dist
+coverage
+playwright-report
+test-results
+.admin-dev*.log
+.mobile-dev*.log
+.env
+.env.local
+.env.*.local
+supabase/.temp
+apps/mobile/.expo
+apps/mobile/.expo-shared
+apps/admin/.next

@@ -1,0 +1,12 @@
+{
+  "name": "@casaticket/config",
+  "private": true,
+  "version": "0.1.0",
+  "exports": {
+    "./tsconfig/base": "./tsconfig/base.json",
+    "./tsconfig/react-app": "./tsconfig/react-app.json",
+    "./tsconfig/next-app": "./tsconfig/next-app.json",
+    "./tsconfig/library": "./tsconfig/library.json"
+  }
+}
+

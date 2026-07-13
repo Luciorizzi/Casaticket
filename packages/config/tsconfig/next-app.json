@@ -1,0 +1,12 @@
+{
+  "extends": "./react-app.json",
+  "compilerOptions": {
+    "incremental": true,
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
+  }
+}
+

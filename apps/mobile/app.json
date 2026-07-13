@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "CasaTicket",
+    "slug": "casaticket-mobile",
+    "scheme": "casaticket",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "plugins": ["expo-router"]
+  }
+}
