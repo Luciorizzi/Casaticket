@@ -221,6 +221,29 @@ describe('route resolution', () => {
     ).toBe('/(onboarding)/role-selection');
   });
 
+  it('routes a customer with incomplete onboarding to customer onboarding', () => {
+    expect(
+      resolveAppRoute({
+        isAuthenticated: true,
+        profile: {
+          id: 'user-5',
+          firstName: 'Camila',
+          lastName: 'Demo',
+          phone: null,
+          avatarPath: null,
+          role: 'customer',
+          province: 'Buenos Aires',
+          city: 'Lanus',
+          onboardingCompleted: false,
+          createdAt: '2026-07-16T00:00:00.000Z',
+          updatedAt: '2026-07-16T00:00:00.000Z',
+        },
+        professionalProfile: null,
+        professionalCategoryIds: [],
+      }),
+    ).toBe('/(onboarding)/customer-profile');
+  });
+
   it('routes a professional with incomplete onboarding back to onboarding', () => {
     expect(
       resolveAppRoute({

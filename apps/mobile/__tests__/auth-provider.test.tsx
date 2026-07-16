@@ -1,6 +1,11 @@
+import type { Profile } from '@casaticket/types';
+
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, waitFor } from '@testing-library/react-native';
+import { useEffect, useRef } from 'react';
 import { Text } from 'react-native';
+
+import { queryKeys } from '@/lib/query-keys';
 
 const mockGetSession = jest.fn();
 const mockGetUser = jest.fn();
@@ -36,6 +41,20 @@ import { resolveAppRoute } from '@/features/navigation/access';
 const activeQueryClients: QueryClient[] = [];
 let consoleErrorSpy: jest.SpyInstance;
 
+const baseProfile: Profile = {
+  id: 'user-1',
+  firstName: 'Demo',
+  lastName: 'Usuario',
+  phone: null,
+  avatarPath: null,
+  role: null,
+  province: 'Buenos Aires',
+  city: 'Lanus',
+  onboardingCompleted: false,
+  createdAt: '2026-07-16T00:00:00.000Z',
+  updatedAt: '2026-07-16T00:00:00.000Z',
+};
+
 function SessionProbe() {
   const { sessionState } = useAuthSession();
   const notice =
@@ -60,13 +79,39 @@ function SessionProbe() {
       <Text testID="status">{sessionState.status}</Text>
       <Text testID="notice">{notice}</Text>
       <Text testID="route">{route}</Text>
+      <Text testID="role">
+        {sessionState.status === 'authenticated' ? sessionState.profile?.role ?? '' : ''}
+      </Text>
     </>
   );
 }
 
-function renderAuthProvider() {
+function ProfileMutationProbe({ updatedProfile }: { updatedProfile: Profile }) {
+  const { sessionState, setProfileFromMutation } = useAuthSession();
+  const didSyncRef = useRef(false);
+
+  useEffect(() => {
+    if (
+      didSyncRef.current ||
+      sessionState.status !== 'authenticated' ||
+      sessionState.profile?.role !== null
+    ) {
+      return;
+    }
+
+    didSyncRef.current = true;
+    setProfileFromMutation(updatedProfile);
+  }, [sessionState, setProfileFromMutation, updatedProfile]);
+
+  return null;
+}
+
+function renderAuthProvider(extraChild?: React.ReactNode) {
   const queryClient = new QueryClient({
     defaultOptions: {
+      mutations: {
+        gcTime: Number.POSITIVE_INFINITY,
+      },
       queries: {
         gcTime: Number.POSITIVE_INFINITY,
         retry: false,
@@ -79,6 +124,7 @@ function renderAuthProvider() {
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
         <SessionProbe />
+        {extraChild}
       </AuthProvider>
     </QueryClientProvider>,
   );
@@ -114,7 +160,7 @@ describe('AuthProvider session validation', () => {
     }
   });
 
-  it('keeps a valid restored session authenticated', async () => {
+  function mockAuthenticatedSession() {
     mockGetSession.mockResolvedValue({
       data: {
         session: {
@@ -140,19 +186,11 @@ describe('AuthProvider session validation', () => {
       },
       error: null,
     });
-    mockEnsureOwnProfile.mockResolvedValue({
-      id: 'user-1',
-      firstName: 'Demo',
-      lastName: 'Valido',
-      phone: null,
-      avatarPath: null,
-      role: null,
-      province: 'Buenos Aires',
-      city: 'Lanus',
-      onboardingCompleted: false,
-      createdAt: '2026-07-16T00:00:00.000Z',
-      updatedAt: '2026-07-16T00:00:00.000Z',
-    });
+  }
+
+  it('keeps a valid restored session authenticated', async () => {
+    mockAuthenticatedSession();
+    mockEnsureOwnProfile.mockResolvedValue(baseProfile);
 
     renderAuthProvider();
 
@@ -163,6 +201,78 @@ describe('AuthProvider session validation', () => {
     expect(screen.getByTestId('route').props.children).toBe('/(onboarding)/role-selection');
     expect(mockGetUser).toHaveBeenCalledTimes(1);
     expect(mockEnsureOwnProfile).toHaveBeenCalledWith('user-1');
+  });
+
+  it('routes a restored customer with incomplete onboarding to customer-profile', async () => {
+    mockAuthenticatedSession();
+    mockEnsureOwnProfile.mockResolvedValue({
+      ...baseProfile,
+      role: 'customer',
+    });
+
+    renderAuthProvider();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('route').props.children).toBe('/(onboarding)/customer-profile');
+    });
+  });
+
+  it('routes a restored professional with incomplete onboarding to professional-profile', async () => {
+    mockAuthenticatedSession();
+    mockEnsureOwnProfile.mockResolvedValue({
+      ...baseProfile,
+      role: 'professional',
+    });
+
+    renderAuthProvider();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('route').props.children).toBe('/(onboarding)/professional-profile');
+    });
+  });
+
+  it('syncs profile cache and session state immediately after a customer role mutation', async () => {
+    mockAuthenticatedSession();
+    mockEnsureOwnProfile.mockResolvedValue(baseProfile);
+
+    const updatedProfile: Profile = {
+      ...baseProfile,
+      role: 'customer',
+    };
+
+    const { queryClient } = renderAuthProvider(
+      <ProfileMutationProbe updatedProfile={updatedProfile} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('route').props.children).toBe('/(onboarding)/customer-profile');
+    });
+
+    expect(screen.getByTestId('role').props.children).toBe('customer');
+    expect(screen.getByTestId('route').props.children).not.toBe('/(onboarding)/role-selection');
+    expect(queryClient.getQueryData(queryKeys.profile('user-1'))).toEqual(updatedProfile);
+  });
+
+  it('syncs profile cache and session state immediately after a professional role mutation', async () => {
+    mockAuthenticatedSession();
+    mockEnsureOwnProfile.mockResolvedValue(baseProfile);
+
+    const updatedProfile: Profile = {
+      ...baseProfile,
+      role: 'professional',
+    };
+
+    const { queryClient } = renderAuthProvider(
+      <ProfileMutationProbe updatedProfile={updatedProfile} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId('route').props.children).toBe('/(onboarding)/professional-profile');
+    });
+
+    expect(screen.getByTestId('role').props.children).toBe('professional');
+    expect(screen.getByTestId('route').props.children).not.toBe('/(onboarding)/role-selection');
+    expect(queryClient.getQueryData(queryKeys.profile('user-1'))).toEqual(updatedProfile);
   });
 
   it('cleans a stored session when the auth user no longer exists', async () => {
@@ -209,31 +319,7 @@ describe('AuthProvider session validation', () => {
   });
 
   it('cleans the session when profile loading hits user_not_found and avoids loops', async () => {
-    mockGetSession.mockResolvedValue({
-      data: {
-        session: {
-          access_token: 'token',
-          refresh_token: 'refresh',
-          expires_at: Math.floor(Date.now() / 1000) + 3600,
-          expires_in: 3600,
-          token_type: 'bearer',
-          user: {
-            id: 'user-1',
-            email: 'demo@casaticket.local',
-          },
-        },
-      },
-      error: null,
-    });
-    mockGetUser.mockResolvedValue({
-      data: {
-        user: {
-          id: 'user-1',
-          email: 'demo@casaticket.local',
-        },
-      },
-      error: null,
-    });
+    mockAuthenticatedSession();
     mockEnsureOwnProfile.mockRejectedValue({
       code: 'user_not_found',
       message: 'User from sub claim in JWT does not exist',

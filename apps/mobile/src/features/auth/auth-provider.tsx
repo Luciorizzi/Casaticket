@@ -1,5 +1,6 @@
 import type { PropsWithChildren } from 'react';
 import type { Session } from '@supabase/supabase-js';
+import type { Profile } from '@casaticket/types';
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -31,6 +32,7 @@ interface AuthContextValue {
   signUp: (values: SignUpInput) => Promise<void>;
   sendPasswordReset: (values: ForgotPasswordInput) => Promise<void>;
   refreshProfile: () => Promise<void>;
+  setProfileFromMutation: (profile: Profile) => void;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -327,6 +329,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
     }
   }, [profileQuery.data?.role, queryClient, user]);
 
+  const setProfileFromMutation = useCallback(
+    (updatedProfile: Profile) => {
+      if (!user || updatedProfile.id !== user.id) {
+        return;
+      }
+
+      queryClient.setQueryData(queryKeys.profile(user.id), updatedProfile);
+
+      if (updatedProfile.role !== 'professional') {
+        queryClient.setQueryData(queryKeys.professionalProfile(user.id), null);
+        queryClient.setQueryData(queryKeys.professionalCategories(user.id), []);
+      }
+    },
+    [queryClient, user],
+  );
+
   const sessionState = useMemo(
     () =>
       buildSessionState({
@@ -410,8 +428,17 @@ export function AuthProvider({ children }: PropsWithChildren) {
         }
       },
       refreshProfile,
+      setProfileFromMutation,
     }),
-    [passwordResetMutation, refreshProfile, sessionState, signInMutation, signOutMutation, signUpMutation],
+    [
+      passwordResetMutation,
+      refreshProfile,
+      sessionState,
+      setProfileFromMutation,
+      signInMutation,
+      signOutMutation,
+      signUpMutation,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
