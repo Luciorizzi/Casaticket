@@ -1,15 +1,5 @@
-import { mobilePlaceholderLinks } from '@casaticket/ui';
+import { ProfessionalHomeScreen as ProfessionalHomeFeatureScreen } from '@/features/professional/screens';
 
-import { PlaceholderScreen } from '@/features/navigation/placeholder-screen';
-
-export default function ProfessionalHomeScreen() {
-  return (
-    <PlaceholderScreen
-      title="Home profesional"
-      subtitle="Placeholder navegable para oportunidades, radio de trabajo y disponibilidad."
-      badge="Profesional"
-      links={mobilePlaceholderLinks}
-    />
-  );
+export default function ProfessionalHomeRoute() {
+  return <ProfessionalHomeFeatureScreen />;
 }
-

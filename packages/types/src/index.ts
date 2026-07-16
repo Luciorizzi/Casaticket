@@ -2,7 +2,12 @@ export type AppRole = 'customer' | 'professional' | 'admin' | 'operator';
 
 export type SelectableMobileRole = Extract<AppRole, 'customer' | 'professional'>;
 
-export type AvailabilityStatus = 'available' | 'busy' | 'paused';
+export type AvailabilityStatus =
+  | 'available'
+  | 'unavailable'
+  | 'busy'
+  | 'scheduled_only'
+  | 'paused';
 
 export type VerificationStatus = 'pending' | 'verified' | 'rejected';
 
@@ -12,7 +17,7 @@ export interface Profile {
   lastName: string;
   phone: string | null;
   avatarPath: string | null;
-  role: AppRole;
+  role: SelectableMobileRole | null;
   province: string;
   city: string;
   onboardingCompleted: boolean;
@@ -66,3 +71,7 @@ export interface ProfessionalCategory {
   createdAt: string;
 }
 
+export interface AuthUser {
+  id: string;
+  email: string | null;
+}

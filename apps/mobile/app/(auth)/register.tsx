@@ -1,15 +1,5 @@
-import { mobilePlaceholderLinks } from '@casaticket/ui';
+import { RegisterScreen as RegisterFeatureScreen } from '@/features/auth/auth-screens';
 
-import { PlaceholderScreen } from '@/features/navigation/placeholder-screen';
-
-export default function RegisterScreen() {
-  return (
-    <PlaceholderScreen
-      title="Registro"
-      subtitle="Base visual para alta de usuarios y profesionales independientes."
-      badge="Auth"
-      links={mobilePlaceholderLinks}
-    />
-  );
+export default function RegisterRoute() {
+  return <RegisterFeatureScreen />;
 }
-

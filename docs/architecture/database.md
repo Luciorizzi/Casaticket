@@ -29,6 +29,16 @@ Roles actuales:
 
 Los roles administrativos no son autoasignables desde clientes.
 
+En esta fase, `role` puede comenzar en `null` hasta que la persona complete la seleccion de rol desde la app movil.
+
+El perfil base se crea desde la aplicacion movil de forma controlada y respetando RLS cuando una sesion autenticada todavia no tiene fila en `profiles`.
+
+Una vez elegido el rol:
+
+- se permite `customer` o `professional`;
+- no se permite `admin` ni `operator`;
+- no se permite cambiar el rol libremente desde cliente una vez seleccionado.
+
 ### professional_profiles
 
 Extension del perfil para profesionales.
@@ -52,6 +62,16 @@ Restriccion actual:
 
 - `service_radius_km` entre 1 y 100.
 
+Disponibilidades actuales:
+
+- `available`
+- `unavailable`
+- `busy`
+- `scheduled_only`
+- `paused`
+
+La validacion profesional comienza siempre en `pending` y no puede ser modificada por el propio profesional.
+
 ### categories
 
 Catalogo administrable de rubros iniciales.
@@ -74,6 +94,12 @@ Direcciones iniciales del cliente, preparadas para futuras solicitudes y ubicaci
 - proteccion contra autoasignacion de roles administrativos;
 - proteccion contra autoverificacion profesional.
 
+Ademas:
+
+- `authenticated` tiene grants explicitos para operar solo las tablas necesarias del flujo movil;
+- `service_role` tiene grants explicitos para seeds, scripts y pruebas reproducibles;
+- el smoke test de RLS cubre lectura propia, escalacion de rol, bloqueo de verificacion profesional, bootstrap de perfil y bloqueo de cambio de rol.
+
 ## Entidades futuras documentadas
 
 No implementadas aun, pero previstas:
@@ -85,4 +111,3 @@ No implementadas aun, pero previstas:
 - calificaciones;
 - reclamos;
 - auditoria de negocio mas detallada.
-

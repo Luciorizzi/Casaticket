@@ -1,6 +1,12 @@
-import { Stack } from 'expo-router';
+import { Tabs } from 'expo-router';
 
 export default function CustomerLayout() {
-  return <Stack screenOptions={{ headerShown: false }} />;
+  return (
+    <Tabs screenOptions={{ headerShown: false, tabBarActiveTintColor: '#bb5e3c' }}>
+      <Tabs.Screen name="home" options={{ title: 'Inicio' }} />
+      <Tabs.Screen name="create-request" options={{ title: 'Crear solicitud' }} />
+      <Tabs.Screen name="requests" options={{ title: 'Mis solicitudes' }} />
+      <Tabs.Screen name="profile" options={{ title: 'Perfil' }} />
+    </Tabs>
+  );
 }
-
