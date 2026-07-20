@@ -1,5 +1,6 @@
 import { Link, type Href } from 'expo-router';
-import { Pressable, SafeAreaView, ScrollView, Text, View } from 'react-native';
+import { Pressable, ScrollView, Text, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { MobilePlaceholderLink } from '@casaticket/ui';
 

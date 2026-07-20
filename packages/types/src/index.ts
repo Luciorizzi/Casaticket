@@ -2,9 +2,20 @@ export type AppRole = 'customer' | 'professional' | 'admin' | 'operator';
 
 export type SelectableMobileRole = Extract<AppRole, 'customer' | 'professional'>;
 
-export type AvailabilityStatus = 'available' | 'busy' | 'paused';
+export type AvailabilityStatus =
+  | 'available'
+  | 'unavailable'
+  | 'busy'
+  | 'scheduled_only'
+  | 'paused';
 
 export type VerificationStatus = 'pending' | 'verified' | 'rejected';
+
+export type ServiceRequestType = 'quote' | 'diagnostic_visit' | 'specific_task' | 'unsure';
+
+export type ServiceRequestUrgency = 'flexible' | 'scheduled' | 'soon' | 'urgent';
+
+export type ServiceRequestStatus = 'draft' | 'published' | 'cancelled';
 
 export interface Profile {
   id: string;
@@ -12,7 +23,7 @@ export interface Profile {
   lastName: string;
   phone: string | null;
   avatarPath: string | null;
-  role: AppRole;
+  role: SelectableMobileRole | null;
   province: string;
   city: string;
   onboardingCompleted: boolean;
@@ -66,3 +77,32 @@ export interface ProfessionalCategory {
   createdAt: string;
 }
 
+export interface ServiceRequest {
+  id: string;
+  customerId: string;
+  categoryId: string | null;
+  title: string;
+  description: string;
+  requestType: ServiceRequestType;
+  urgency: ServiceRequestUrgency;
+  addressText: string;
+  city: string;
+  province: string;
+  preferredDate: string | null;
+  preferredTimeText: string | null;
+  availabilityNotes: string | null;
+  status: ServiceRequestStatus;
+  publishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
+export interface ServiceRequestWithCategory extends ServiceRequest {
+  category: Category | null;
+}
+
+export interface AuthUser {
+  id: string;
+  email: string | null;
+}

@@ -1,15 +1,5 @@
-import { mobilePlaceholderLinks } from '@casaticket/ui';
+import { CustomerHomeScreen as CustomerHomeFeatureScreen } from '@/features/customer/screens';
 
-import { PlaceholderScreen } from '@/features/navigation/placeholder-screen';
-
-export default function CustomerHomeScreen() {
-  return (
-    <PlaceholderScreen
-      title="Home cliente"
-      subtitle="Placeholder navegable para el flujo del usuario que publica solicitudes."
-      badge="Cliente"
-      links={mobilePlaceholderLinks}
-    />
-  );
+export default function CustomerHomeRoute() {
+  return <CustomerHomeFeatureScreen />;
 }
-

@@ -29,5 +29,12 @@
 
 ## Nota de esta fase
 
-La fase actual no implementa aun el MVP funcional. Solo construye la fundacion tecnica, documental y de seguridad para poder avanzar con consistencia en las siguientes iteraciones.
+La fase actual ya implementa autenticacion y onboarding movil reales, pero todavia no completa el MVP operativo del marketplace.
 
+Lo que sigue pendiente para considerar funcional el MVP de punta a punta:
+
+- solicitudes reales;
+- oportunidades reales;
+- postulaciones;
+- seleccion de profesional;
+- coordinacion posterior al match.

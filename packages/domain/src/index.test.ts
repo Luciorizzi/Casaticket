@@ -2,7 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import {
   canSelfAssignRole,
+  getAvailabilityLabel,
+  getProfileDisplayName,
+  getServiceRequestStatusLabel,
+  getServiceRequestTypeLabel,
+  getServiceRequestUrgencyLabel,
   getCoverageSummary,
+  isAvailabilityStatus,
   isSelectableMobileRole,
   isServiceRadiusValid,
 } from './index';
@@ -18,6 +24,11 @@ describe('domain guards', () => {
     expect(isSelectableMobileRole('operator')).toBe(false);
   });
 
+  it('validates supported professional availability states', () => {
+    expect(isAvailabilityStatus('scheduled_only')).toBe(true);
+    expect(isAvailabilityStatus('archived')).toBe(false);
+  });
+
   it('enforces the service radius limits', () => {
     expect(isServiceRadiusValid(1)).toBe(true);
     expect(isServiceRadiusValid(100)).toBe(true);
@@ -27,5 +38,19 @@ describe('domain guards', () => {
   it('formats a readable coverage summary', () => {
     expect(getCoverageSummary('CABA', 25)).toBe('CABA hasta 25 km');
   });
-});
 
+  it('returns readable availability labels in Spanish', () => {
+    expect(getAvailabilityLabel('available')).toBe('Disponible');
+    expect(getAvailabilityLabel('scheduled_only')).toBe('Solo trabajos programados');
+  });
+
+  it('formats the display name from profile data', () => {
+    expect(getProfileDisplayName({ firstName: 'Camila', lastName: 'Prueba' })).toBe('Camila Prueba');
+  });
+
+  it('returns readable service request labels in Spanish', () => {
+    expect(getServiceRequestTypeLabel('diagnostic_visit')).toBe('Necesito visita diagnóstica');
+    expect(getServiceRequestUrgencyLabel('urgent')).toBe('Urgente');
+    expect(getServiceRequestStatusLabel('cancelled')).toBe('Cancelada');
+  });
+});
