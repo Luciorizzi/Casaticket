@@ -11,6 +11,12 @@ export type AvailabilityStatus =
 
 export type VerificationStatus = 'pending' | 'verified' | 'rejected';
 
+export type ServiceRequestType = 'quote' | 'diagnostic_visit' | 'specific_task' | 'unsure';
+
+export type ServiceRequestUrgency = 'flexible' | 'scheduled' | 'soon' | 'urgent';
+
+export type ServiceRequestStatus = 'draft' | 'published' | 'cancelled';
+
 export interface Profile {
   id: string;
   firstName: string;
@@ -69,6 +75,31 @@ export interface ProfessionalCategory {
   professionalId: string;
   categoryId: string;
   createdAt: string;
+}
+
+export interface ServiceRequest {
+  id: string;
+  customerId: string;
+  categoryId: string | null;
+  title: string;
+  description: string;
+  requestType: ServiceRequestType;
+  urgency: ServiceRequestUrgency;
+  addressText: string;
+  city: string;
+  province: string;
+  preferredDate: string | null;
+  preferredTimeText: string | null;
+  availabilityNotes: string | null;
+  status: ServiceRequestStatus;
+  publishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+}
+
+export interface ServiceRequestWithCategory extends ServiceRequest {
+  category: Category | null;
 }
 
 export interface AuthUser {

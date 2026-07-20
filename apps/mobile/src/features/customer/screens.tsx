@@ -1,20 +1,37 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { router } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
+import { router, type Href } from 'expo-router';
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import { getProfileDisplayName } from '@casaticket/domain';
-import type { CustomerOnboardingInput } from '@casaticket/validation';
+import {
+  getProfileDisplayName,
+  getServiceRequestStatusLabel,
+  getServiceRequestTypeLabel,
+  getServiceRequestUrgencyLabel,
+} from '@casaticket/domain';
+import type { ServiceRequestWithCategory } from '@casaticket/types';
+import type { CreateServiceRequestInput, CustomerOnboardingInput } from '@casaticket/validation';
 
 import { Avatar } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorState } from '@/components/ui/error-state';
+import { LoadingState } from '@/components/ui/loading-state';
 import { Screen } from '@/components/ui/screen';
 import { useAuthSession } from '@/features/auth/auth-provider';
+import { listActiveCategories } from '@/features/categories/api';
 import { CustomerProfileForm } from '@/features/customer/customer-profile-form';
+import { ServiceRequestForm } from '@/features/customer/service-request-form';
+import {
+  cancelOwnServiceRequest,
+  createServiceRequest,
+  getOwnServiceRequest,
+  listOwnServiceRequests,
+} from '@/features/customer/service-requests-api';
+import { resolveAppRoute } from '@/features/navigation/access';
 import { fetchOwnDefaultAddress, saveCustomerOnboarding } from '@/features/profile/api';
+import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
 import { queryKeys } from '@/lib/query-keys';
 
 export function CustomerOnboardingScreen() {
@@ -51,43 +68,235 @@ export function CustomerHomeScreen() {
             </Text>
           </View>
         </View>
-        <Button onPress={() => router.push('/(customer)/create-request')}>Publicar una solicitud</Button>
+        <Button onPress={() => router.push('/(customer)/create-request')}>
+          Publicar una solicitud
+        </Button>
       </Card>
 
       <EmptyState
-        actionLabel="Ver mi perfil"
-        description="Todavía no hay solicitudes reales en esta fase. Dejamos la navegación lista para la próxima iteración."
-        onAction={() => router.push('/(customer)/profile')}
-        title="Todavía no tenés solicitudes"
+        actionLabel="Ver mis solicitudes"
+        description="Las solicitudes ya quedan guardadas para que puedas abrirlas y cancelarlas si siguen publicadas."
+        onAction={() => router.push('/(customer)/requests')}
+        title="Seguimiento de solicitudes"
       />
     </Screen>
   );
 }
 
 export function CustomerCreateRequestScreen() {
+  const queryClient = useQueryClient();
+  const { sessionState } = useAuthSession();
+  const profile = sessionState.status === 'authenticated' ? sessionState.profile : null;
+  const [error, setError] = useState<string | null>(null);
+  const categoryQuery = useQuery({
+    queryKey: queryKeys.categories,
+    queryFn: listActiveCategories,
+  });
+  const createMutation = useMutation({
+    mutationFn: createServiceRequest,
+    onSuccess: (createdRequest) => {
+      if (sessionState.status !== 'authenticated') {
+        return;
+      }
+
+      const listKey = queryKeys.serviceRequests(sessionState.user.id);
+      const detailKey = queryKeys.serviceRequest(sessionState.user.id, createdRequest.id);
+      queryClient.setQueryData(detailKey, createdRequest);
+      queryClient.setQueryData<ServiceRequestWithCategory[]>(listKey, (currentRequests = []) => [
+        createdRequest,
+        ...currentRequests.filter((request) => request.id !== createdRequest.id),
+      ]);
+
+      router.replace(`/(customer)/requests/${createdRequest.id}` as Href);
+    },
+  });
+  const initialValues = useMemo<CreateServiceRequestInput>(
+    () => ({
+      title: '',
+      description: '',
+      categoryId: null,
+      unsureCategory: false,
+      requestType: 'quote',
+      urgency: 'flexible',
+      addressText: '',
+      city: profile?.city ?? '',
+      province: profile?.province ?? '',
+      preferredDate: null,
+      preferredTimeText: null,
+      availabilityNotes: null,
+    }),
+    [profile?.city, profile?.province],
+  );
+
   return (
     <Screen
-      subtitle="La navegación ya está separada por rol. El formulario real de solicitudes entra en la fase siguiente."
+      subtitle="Describí qué necesitás, dónde es y cuándo podrías recibir ayuda."
       title="Crear solicitud"
     >
-      <EmptyState
-        description="Pronto vas a poder describir tu problema, adjuntar fotos y recibir propuestas desde esta pantalla."
-        title="Módulo preparado"
+      {error ? <ErrorState message={error} title="No pudimos publicar la solicitud" /> : null}
+      <ServiceRequestForm
+        categories={categoryQuery.data ?? []}
+        categoriesError={categoryQuery.error instanceof Error ? categoryQuery.error.message : undefined}
+        categoriesLoading={categoryQuery.isPending}
+        initialValues={initialValues}
+        loading={createMutation.isPending}
+        onRetryCategories={() => void categoryQuery.refetch()}
+        onSubmit={async (values) => {
+          setError(null);
+
+          try {
+            await createMutation.mutateAsync(values);
+          } catch (submissionError) {
+            logDevelopmentSupabaseError('service-requests:create-screen', submissionError);
+            setError(
+              getUserFacingErrorMessage(
+                submissionError,
+                'No pudimos publicar la solicitud.',
+              ),
+            );
+          }
+        }}
       />
     </Screen>
   );
 }
 
 export function CustomerRequestsScreen() {
+  const { sessionState } = useAuthSession();
+  const requestsQuery = useQuery({
+    queryKey:
+      sessionState.status === 'authenticated'
+        ? queryKeys.serviceRequests(sessionState.user.id)
+        : ['service-requests'],
+    queryFn: listOwnServiceRequests,
+    enabled: sessionState.status === 'authenticated',
+  });
+
+  if (requestsQuery.isPending) {
+    return (
+      <Screen subtitle="Buscando tus publicaciones más recientes." title="Mis solicitudes">
+        <LoadingState message="Cargando solicitudes..." />
+      </Screen>
+    );
+  }
+
+  if (requestsQuery.error) {
+    return (
+      <Screen subtitle="Buscando tus publicaciones más recientes." title="Mis solicitudes">
+        <ErrorState
+          message="No pudimos cargar tus solicitudes."
+          onRetry={() => void requestsQuery.refetch()}
+        />
+      </Screen>
+    );
+  }
+
+  const requests = requestsQuery.data ?? [];
+
   return (
     <Screen
-      subtitle="Las solicitudes reales todavía no forman parte de esta fase, pero el espacio ya está reservado."
+      subtitle="Tus publicaciones aparecen ordenadas de más reciente a más antigua."
       title="Mis solicitudes"
     >
-      <EmptyState
-        description="Cuando la fase de marketplace avance, acá vas a ver el historial y el estado de cada pedido."
-        title="Sin solicitudes todavía"
-      />
+      {requests.length === 0 ? (
+        <EmptyState
+          actionLabel="Crear solicitud"
+          description="Todavía no publicaste solicitudes. Podés crear la primera ahora."
+          onAction={() => router.push('/(customer)/create-request')}
+          title="Sin solicitudes todavía"
+        />
+      ) : (
+        <>
+          <Button onPress={() => void requestsQuery.refetch()} variant="secondary">
+            Actualizar listado
+          </Button>
+          {requests.map((request) => (
+            <ServiceRequestListItem key={request.id} request={request} />
+          ))}
+        </>
+      )}
+    </Screen>
+  );
+}
+
+export function CustomerRequestDetailScreen({ requestId }: { requestId: string }) {
+  const queryClient = useQueryClient();
+  const { sessionState } = useAuthSession();
+  const requestQuery = useQuery({
+    queryKey:
+      sessionState.status === 'authenticated'
+        ? queryKeys.serviceRequest(sessionState.user.id, requestId)
+        : ['service-request', requestId],
+    queryFn: () => getOwnServiceRequest(requestId),
+    enabled: sessionState.status === 'authenticated' && requestId.length > 0,
+  });
+  const cancelMutation = useMutation({
+    mutationFn: cancelOwnServiceRequest,
+    onSuccess: (updatedRequest) => {
+      if (sessionState.status !== 'authenticated') {
+        return;
+      }
+
+      queryClient.setQueryData(
+        queryKeys.serviceRequest(sessionState.user.id, updatedRequest.id),
+        updatedRequest,
+      );
+      queryClient.setQueryData<ServiceRequestWithCategory[]>(
+        queryKeys.serviceRequests(sessionState.user.id),
+        (currentRequests = []) =>
+          currentRequests.map((request) =>
+            request.id === updatedRequest.id ? updatedRequest : request,
+          ),
+      );
+    },
+  });
+
+  if (requestQuery.isPending) {
+    return (
+      <Screen subtitle="Buscando la información de tu solicitud." title="Detalle">
+        <LoadingState message="Cargando solicitud..." />
+      </Screen>
+    );
+  }
+
+  if (requestQuery.error || !requestQuery.data) {
+    return (
+      <Screen subtitle="Buscando la información de tu solicitud." title="Detalle">
+        <ErrorState
+          message="No pudimos abrir esta solicitud."
+          onRetry={() => void requestQuery.refetch()}
+        />
+      </Screen>
+    );
+  }
+
+  const request = requestQuery.data;
+  const confirmCancel = () => {
+    Alert.alert(
+      'Cancelar solicitud',
+      'La solicitud seguirá visible en tu historial como cancelada.',
+      [
+        { style: 'cancel', text: 'Volver' },
+        {
+          onPress: () => void cancelMutation.mutateAsync(request.id),
+          style: 'destructive',
+          text: 'Cancelar solicitud',
+        },
+      ],
+    );
+  };
+
+  return (
+    <Screen subtitle="Detalle de la solicitud publicada." title={request.title}>
+      <ServiceRequestDetailCard request={request} />
+      {request.status === 'published' ? (
+        <Button disabled={cancelMutation.isPending} onPress={confirmCancel} variant="danger">
+          {cancelMutation.isPending ? 'Cancelando...' : 'Cancelar solicitud'}
+        </Button>
+      ) : null}
+      {cancelMutation.error ? (
+        <ErrorState message="No pudimos cancelar la solicitud." title="Cancelación fallida" />
+      ) : null}
     </Screen>
   );
 }
@@ -112,7 +321,7 @@ function CustomerProfileEditorScreen({
   title: string;
 }) {
   const queryClient = useQueryClient();
-  const { refreshProfile, sessionState, signOut } = useAuthSession();
+  const { sessionState, setProfileFromMutation, signOut } = useAuthSession();
   const profile = sessionState.status === 'authenticated' ? sessionState.profile : null;
   const [error, setError] = useState<string | null>(null);
 
@@ -127,17 +336,34 @@ function CustomerProfileEditorScreen({
 
   const saveMutation = useMutation({
     mutationFn: saveCustomerOnboarding,
-    onSuccess: async () => {
+    onSuccess: async (updatedProfile) => {
       if (sessionState.status === 'authenticated') {
-        await queryClient.invalidateQueries({
-          queryKey: queryKeys.profile(sessionState.user.id),
-        });
+        queryClient.setQueryData(queryKeys.profile(sessionState.user.id), updatedProfile);
+        setProfileFromMutation(updatedProfile);
+
         await queryClient.invalidateQueries({
           queryKey: queryKeys.customerAddress(sessionState.user.id),
         });
-      }
 
-      await refreshProfile();
+        const resolvedRoute = resolveAppRoute({
+          isAuthenticated: true,
+          profile: updatedProfile,
+          professionalProfile: null,
+          professionalCategoryIds: [],
+        });
+
+        if (process.env.NODE_ENV !== 'production') {
+          console.info('[customer-onboarding] profile saved', {
+            userId: sessionState.user.id,
+            profileCacheUpdated:
+              queryClient.getQueryData(queryKeys.profile(sessionState.user.id)) === updatedProfile,
+            onboardingCompleted: updatedProfile.onboardingCompleted,
+            resolvedRoute,
+          });
+        }
+
+        router.replace(resolvedRoute as Href);
+      }
     },
   });
 
@@ -179,10 +405,12 @@ function CustomerProfileEditorScreen({
           try {
             await saveMutation.mutateAsync(values);
           } catch (submissionError) {
+            logDevelopmentSupabaseError('customer-onboarding', submissionError);
             setError(
-              submissionError instanceof Error
-                ? submissionError.message
-                : 'No pudimos guardar el perfil.',
+              getUserFacingErrorMessage(
+                submissionError,
+                'No pudimos guardar el perfil.',
+              ),
             );
           }
         }}
@@ -190,6 +418,64 @@ function CustomerProfileEditorScreen({
       />
     </Screen>
   );
+}
+
+function ServiceRequestListItem({ request }: { request: ServiceRequestWithCategory }) {
+  return (
+    <Pressable onPress={() => router.push(`/(customer)/requests/${request.id}` as Href)}>
+      <Card>
+        <View style={styles.requestCard}>
+          <Text style={styles.requestTitle}>{request.title}</Text>
+          <Text style={styles.requestMeta}>
+            {request.category?.name ?? 'Sin categoría'} · {getServiceRequestStatusLabel(request.status)}
+          </Text>
+          <Text style={styles.requestMeta}>
+            {request.city} · {getServiceRequestUrgencyLabel(request.urgency)}
+          </Text>
+          <Text style={styles.requestMeta}>Publicada: {formatDateTime(request.publishedAt)}</Text>
+        </View>
+      </Card>
+    </Pressable>
+  );
+}
+
+function ServiceRequestDetailCard({ request }: { request: ServiceRequestWithCategory }) {
+  return (
+    <Card>
+      <View style={styles.requestCard}>
+        <Text style={styles.requestTitle}>{request.title}</Text>
+        <Text style={styles.requestDescription}>{request.description}</Text>
+        <Text style={styles.requestMeta}>Categoría: {request.category?.name ?? 'Sin categoría'}</Text>
+        <Text style={styles.requestMeta}>Tipo: {getServiceRequestTypeLabel(request.requestType)}</Text>
+        <Text style={styles.requestMeta}>Urgencia: {getServiceRequestUrgencyLabel(request.urgency)}</Text>
+        <Text style={styles.requestMeta}>
+          Dirección: {request.addressText}, {request.city}, {request.province}
+        </Text>
+        <Text style={styles.requestMeta}>
+          Fecha preferida: {request.preferredDate ?? 'Sin fecha preferida'}
+        </Text>
+        <Text style={styles.requestMeta}>
+          Horario: {request.preferredTimeText ?? 'Sin horario específico'}
+        </Text>
+        <Text style={styles.requestMeta}>
+          Disponibilidad: {request.availabilityNotes ?? 'Sin notas adicionales'}
+        </Text>
+        <Text style={styles.requestMeta}>Estado: {getServiceRequestStatusLabel(request.status)}</Text>
+        <Text style={styles.requestMeta}>Publicada: {formatDateTime(request.publishedAt)}</Text>
+      </View>
+    </Card>
+  );
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) {
+    return 'Sin fecha';
+  }
+
+  return new Intl.DateTimeFormat('es-AR', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+  }).format(new Date(value));
 }
 
 const styles = StyleSheet.create({
@@ -211,5 +497,23 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     color: '#675a49',
+  },
+  requestCard: {
+    gap: 10,
+  },
+  requestTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1d1811',
+  },
+  requestMeta: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#675a49',
+  },
+  requestDescription: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#1d1811',
   },
 });

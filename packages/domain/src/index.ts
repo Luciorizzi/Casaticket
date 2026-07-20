@@ -1,4 +1,12 @@
-import type { AppRole, AvailabilityStatus, Profile, SelectableMobileRole } from '@casaticket/types';
+import type {
+  AppRole,
+  AvailabilityStatus,
+  Profile,
+  SelectableMobileRole,
+  ServiceRequestStatus,
+  ServiceRequestType,
+  ServiceRequestUrgency,
+} from '@casaticket/types';
 
 export const COVERAGE_LIMITS = {
   minRadiusKm: 1,
@@ -16,6 +24,26 @@ export const PROFESSIONAL_AVAILABILITY_STATUSES = [
   'scheduled_only',
   'paused',
 ] as const satisfies readonly AvailabilityStatus[];
+
+export const SERVICE_REQUEST_TYPES = [
+  'quote',
+  'diagnostic_visit',
+  'specific_task',
+  'unsure',
+] as const satisfies readonly ServiceRequestType[];
+
+export const SERVICE_REQUEST_URGENCIES = [
+  'flexible',
+  'scheduled',
+  'soon',
+  'urgent',
+] as const satisfies readonly ServiceRequestUrgency[];
+
+export const SERVICE_REQUEST_STATUSES = [
+  'draft',
+  'published',
+  'cancelled',
+] as const satisfies readonly ServiceRequestStatus[];
 
 export function isSelectableMobileRole(role: AppRole): role is SelectableMobileRole {
   return MOBILE_SELECTABLE_ROLES.includes(role as SelectableMobileRole);
@@ -49,6 +77,43 @@ export function getAvailabilityLabel(status: AvailabilityStatus): string {
       return 'Solo trabajos programados';
     case 'paused':
       return 'Perfil pausado';
+  }
+}
+
+export function getServiceRequestTypeLabel(type: ServiceRequestType): string {
+  switch (type) {
+    case 'quote':
+      return 'Quiero cotizar';
+    case 'diagnostic_visit':
+      return 'Necesito visita diagnóstica';
+    case 'specific_task':
+      return 'Tarea específica';
+    case 'unsure':
+      return 'No estoy seguro';
+  }
+}
+
+export function getServiceRequestUrgencyLabel(urgency: ServiceRequestUrgency): string {
+  switch (urgency) {
+    case 'flexible':
+      return 'Flexible';
+    case 'scheduled':
+      return 'Programada';
+    case 'soon':
+      return 'Pronto';
+    case 'urgent':
+      return 'Urgente';
+  }
+}
+
+export function getServiceRequestStatusLabel(status: ServiceRequestStatus): string {
+  switch (status) {
+    case 'draft':
+      return 'Borrador';
+    case 'published':
+      return 'Publicada';
+    case 'cancelled':
+      return 'Cancelada';
   }
 }
 

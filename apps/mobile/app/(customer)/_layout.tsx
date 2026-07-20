@@ -6,6 +6,7 @@ export default function CustomerLayout() {
       <Tabs.Screen name="home" options={{ title: 'Inicio' }} />
       <Tabs.Screen name="create-request" options={{ title: 'Crear solicitud' }} />
       <Tabs.Screen name="requests" options={{ title: 'Mis solicitudes' }} />
+      <Tabs.Screen name="requests/[id]" options={{ href: null, title: 'Detalle' }} />
       <Tabs.Screen name="profile" options={{ title: 'Perfil' }} />
     </Tabs>
   );

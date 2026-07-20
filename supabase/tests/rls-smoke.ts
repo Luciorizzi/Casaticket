@@ -266,6 +266,106 @@ async function main() {
     throw new Error('Bootstrap user unexpectedly modified another user role.');
   }
 
+  const serviceRequestCategoryId = categoryQuery.data?.[0]?.id;
+
+  if (!serviceRequestCategoryId) {
+    throw new Error('No category available for service request smoke test.');
+  }
+
+  const ownServiceRequestInsert = await customerClient
+    .from('service_requests')
+    .insert({
+      customer_id: customerId,
+      category_id: serviceRequestCategoryId,
+      title: 'Arreglo de perdida',
+      description: 'Tengo una perdida debajo de la bacha de la cocina y necesito resolverla.',
+      request_type: 'specific_task',
+      urgency: 'soon',
+      address_text: 'Calle 123',
+      city: 'Lanus',
+      province: 'Buenos Aires',
+      status: 'published',
+      published_at: new Date().toISOString(),
+    })
+    .select('id, customer_id, status')
+    .single();
+
+  if (ownServiceRequestInsert.error || ownServiceRequestInsert.data.customer_id !== customerId) {
+    throw new Error(
+      `Customer could not create own service request: ${ownServiceRequestInsert.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const foreignServiceRequestInsert = await bootstrapClient
+    .from('service_requests')
+    .insert({
+      customer_id: customerId,
+      category_id: serviceRequestCategoryId,
+      title: 'Solicitud ajena',
+      description: 'Intento de crear una solicitud para otro cliente desde RLS smoke.',
+      request_type: 'quote',
+      urgency: 'flexible',
+      address_text: 'Calle 456',
+      city: 'Lanus',
+      province: 'Buenos Aires',
+      status: 'published',
+      published_at: new Date().toISOString(),
+    })
+    .select('id')
+    .single();
+
+  if (!foreignServiceRequestInsert.error) {
+    throw new Error('Bootstrap user unexpectedly created a service request for another customer.');
+  }
+
+  const foreignServiceRequestRead = await bootstrapClient
+    .from('service_requests')
+    .select('id')
+    .eq('id', ownServiceRequestInsert.data.id);
+
+  if (foreignServiceRequestRead.error) {
+    throw new Error(`Unexpected foreign service request read error: ${foreignServiceRequestRead.error.message}`);
+  }
+
+  if ((foreignServiceRequestRead.data ?? []).length !== 0) {
+    throw new Error('Bootstrap user unexpectedly read another customer service request.');
+  }
+
+  const foreignServiceRequestCancel = await bootstrapClient
+    .from('service_requests')
+    .update({ status: 'cancelled' })
+    .eq('id', ownServiceRequestInsert.data.id)
+    .select('id, status')
+    .single();
+
+  if (!foreignServiceRequestCancel.error) {
+    throw new Error('Bootstrap user unexpectedly cancelled another customer service request.');
+  }
+
+  const ownServiceRequestCancel = await customerClient
+    .from('service_requests')
+    .update({ status: 'cancelled' })
+    .eq('id', ownServiceRequestInsert.data.id)
+    .select('id, status')
+    .single();
+
+  if (ownServiceRequestCancel.error || ownServiceRequestCancel.data.status !== 'cancelled') {
+    throw new Error(
+      `Customer could not cancel own published service request: ${ownServiceRequestCancel.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const serviceRequestReactivationAttempt = await customerClient
+    .from('service_requests')
+    .update({ status: 'published' })
+    .eq('id', ownServiceRequestInsert.data.id)
+    .select('id, status')
+    .single();
+
+  if (!serviceRequestReactivationAttempt.error) {
+    throw new Error('Customer unexpectedly reactivated a cancelled service request.');
+  }
+
   console.log('RLS smoke test passed.');
 }
 

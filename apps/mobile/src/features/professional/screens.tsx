@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { getProfileDisplayName } from '@casaticket/domain';
@@ -19,8 +19,10 @@ import {
 } from '@/components/ui/status-badge';
 import { useAuthSession } from '@/features/auth/auth-provider';
 import { listActiveCategories } from '@/features/categories/api';
+import { resolveAppRoute } from '@/features/navigation/access';
 import { ProfessionalProfileForm } from '@/features/professional/professional-profile-form';
 import { saveProfessionalOnboarding } from '@/features/profile/api';
+import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
 import { queryKeys } from '@/lib/query-keys';
 
 export function ProfessionalOnboardingScreen() {
@@ -145,7 +147,7 @@ function ProfessionalProfileEditorScreen({
   title: string;
 }) {
   const queryClient = useQueryClient();
-  const { refreshProfile, sessionState, signOut } = useAuthSession();
+  const { sessionState, setProfileFromMutation, signOut } = useAuthSession();
   const profile = sessionState.status === 'authenticated' ? sessionState.profile : null;
   const professionalProfile =
     sessionState.status === 'authenticated' ? sessionState.professionalProfile : null;
@@ -158,20 +160,39 @@ function ProfessionalProfileEditorScreen({
 
   const saveMutation = useMutation({
     mutationFn: saveProfessionalOnboarding,
-    onSuccess: async () => {
+    onSuccess: ({ categories, professionalProfile: updatedProfessionalProfile, profile: updatedProfile }) => {
       if (sessionState.status === 'authenticated') {
-        await queryClient.invalidateQueries({
-          queryKey: queryKeys.profile(sessionState.user.id),
-        });
-        await queryClient.invalidateQueries({
-          queryKey: queryKeys.professionalProfile(sessionState.user.id),
-        });
-        await queryClient.invalidateQueries({
-          queryKey: queryKeys.professionalCategories(sessionState.user.id),
-        });
-      }
+        queryClient.setQueryData(queryKeys.profile(sessionState.user.id), updatedProfile);
+        queryClient.setQueryData(
+          queryKeys.professionalProfile(sessionState.user.id),
+          updatedProfessionalProfile,
+        );
+        queryClient.setQueryData(queryKeys.professionalCategories(sessionState.user.id), categories);
+        setProfileFromMutation(updatedProfile);
 
-      await refreshProfile();
+        const resolvedRoute = resolveAppRoute({
+          isAuthenticated: true,
+          profile: updatedProfile,
+          professionalProfile: updatedProfessionalProfile,
+          professionalCategoryIds: categories,
+        });
+
+        if (process.env.NODE_ENV !== 'production') {
+          console.info('[professional-onboarding] profile saved', {
+            userId: sessionState.user.id,
+            profileCacheUpdated:
+              queryClient.getQueryData(queryKeys.profile(sessionState.user.id)) === updatedProfile,
+            professionalProfileCacheUpdated:
+              queryClient.getQueryData(queryKeys.professionalProfile(sessionState.user.id)) ===
+              updatedProfessionalProfile,
+            categoryCount: categories.length,
+            onboardingCompleted: updatedProfile.onboardingCompleted,
+            resolvedRoute,
+          });
+        }
+
+        router.replace(resolvedRoute as Href);
+      }
     },
   });
 
@@ -226,10 +247,12 @@ function ProfessionalProfileEditorScreen({
           try {
             await saveMutation.mutateAsync(values);
           } catch (submissionError) {
+            logDevelopmentSupabaseError('professional-onboarding', submissionError);
             setError(
-              submissionError instanceof Error
-                ? submissionError.message
-                : 'No pudimos guardar tu perfil profesional.',
+              getUserFacingErrorMessage(
+                submissionError,
+                'No pudimos guardar tu perfil profesional.',
+              ),
             );
           }
         }}

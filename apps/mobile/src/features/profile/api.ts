@@ -12,6 +12,7 @@ import type {
   ProfessionalOnboardingInput,
 } from '@casaticket/validation';
 
+import { getSupabaseErrorMetadata } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 
 interface ProfileRow {
@@ -106,6 +107,71 @@ function mapCustomerAddress(row: CustomerAddressRow): CustomerAddress {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+function logCustomerOnboardingDevelopment(
+  context: string,
+  payload: {
+    userId: string;
+    updatePayload: {
+      first_name: string;
+      last_name: string;
+      phone: string;
+      city: string;
+      province: string;
+      onboarding_completed: true;
+    };
+    error?: unknown;
+  },
+): void {
+  if (process.env.NODE_ENV === 'production') {
+    return;
+  }
+
+  const metadata = getSupabaseErrorMetadata(payload.error);
+
+  console.info(`[${context}] customer onboarding profile update`, {
+    userId: payload.userId,
+    payload: payload.updatePayload,
+    error: payload.error
+      ? {
+          code: metadata.code ?? null,
+          message: metadata.message ?? null,
+          details: metadata.details ?? null,
+          hint: metadata.hint ?? null,
+        }
+      : null,
+  });
+}
+
+function logProfessionalOnboardingDevelopment(
+  context: string,
+  payload: {
+    userId: string;
+    stage: string;
+    operationPayload: Record<string, unknown>;
+    error?: unknown;
+  },
+): void {
+  if (process.env.NODE_ENV === 'production') {
+    return;
+  }
+
+  const metadata = getSupabaseErrorMetadata(payload.error);
+
+  console.info(`[${context}] professional onboarding`, {
+    userId: payload.userId,
+    stage: payload.stage,
+    payload: payload.operationPayload,
+    error: payload.error
+      ? {
+          code: metadata.code ?? null,
+          message: metadata.message ?? null,
+          details: metadata.details ?? null,
+          hint: metadata.hint ?? null,
+        }
+      : null,
+  });
 }
 
 async function requireCurrentUserId(): Promise<string> {
@@ -257,20 +323,34 @@ async function upsertDefaultCustomerAddress(values: CustomerOnboardingInput): Pr
 }
 
 export async function saveCustomerOnboarding(values: CustomerOnboardingInput): Promise<Profile> {
+  const userId = await requireCurrentUserId();
+  const updatePayload = {
+    first_name: values.firstName,
+    last_name: values.lastName,
+    phone: values.phone,
+    city: values.city,
+    province: values.province,
+    onboarding_completed: true,
+  } as const;
+
+  logCustomerOnboardingDevelopment('profile-api:save-customer-onboarding', {
+    userId,
+    updatePayload,
+  });
+
   const { data, error } = await supabase
     .from('profiles')
-    .update({
-      first_name: values.firstName,
-      last_name: values.lastName,
-      phone: values.phone,
-      province: values.province,
-      city: values.city,
-      onboarding_completed: true,
-    })
+    .update(updatePayload)
+    .eq('id', userId)
     .select('*')
     .single();
 
   if (error) {
+    logCustomerOnboardingDevelopment('profile-api:save-customer-onboarding:error', {
+      userId,
+      updatePayload,
+      error,
+    });
     throw error;
   }
 
@@ -341,33 +421,118 @@ export async function replaceProfessionalCategories(
 export async function saveProfessionalOnboarding(
   values: ProfessionalOnboardingInput,
 ): Promise<{ profile: Profile; professionalProfile: ProfessionalProfile; categories: string[] }> {
-  const { data: profileData, error: profileError } = await supabase
+  const userId = await requireCurrentUserId();
+  const profilePayload = {
+    first_name: values.firstName,
+    last_name: values.lastName,
+    phone: values.phone,
+    city: values.city,
+    province: values.province,
+  } as const;
+
+  logProfessionalOnboardingDevelopment('profile-api:save-professional-onboarding', {
+    userId,
+    stage: 'profiles.update',
+    operationPayload: profilePayload,
+  });
+
+  const { error: profileError } = await supabase
     .from('profiles')
-    .update({
-      first_name: values.firstName,
-      last_name: values.lastName,
-      phone: values.phone,
-      province: values.province,
-      city: values.city,
-    })
+    .update(profilePayload)
+    .eq('id', userId)
     .select('*')
     .single();
 
   if (profileError) {
+    logProfessionalOnboardingDevelopment('profile-api:save-professional-onboarding:error', {
+      userId,
+      stage: 'profiles.update',
+      operationPayload: profilePayload,
+      error: profileError,
+    });
     throw profileError;
   }
 
-  const professionalProfile = await upsertProfessionalProfile(values);
-  await replaceProfessionalCategories(professionalProfile.id, values.categoryIds);
+  logProfessionalOnboardingDevelopment('profile-api:save-professional-onboarding', {
+    userId,
+    stage: 'professional_profiles.upsert',
+    operationPayload: {
+      user_id: userId,
+      bio: values.bio,
+      years_experience: values.yearsExperience,
+      base_city: values.baseCity,
+      service_radius_km: values.serviceRadiusKm,
+      availability_status: values.availabilityStatus,
+    },
+  });
+
+  let professionalProfile: ProfessionalProfile;
+
+  try {
+    professionalProfile = await upsertProfessionalProfile(values);
+  } catch (professionalProfileError) {
+    logProfessionalOnboardingDevelopment('profile-api:save-professional-onboarding:error', {
+      userId,
+      stage: 'professional_profiles.upsert',
+      operationPayload: {
+        user_id: userId,
+        bio: values.bio,
+        years_experience: values.yearsExperience,
+        base_city: values.baseCity,
+        service_radius_km: values.serviceRadiusKm,
+        availability_status: values.availabilityStatus,
+      },
+      error: professionalProfileError,
+    });
+    throw professionalProfileError;
+  }
+
+  logProfessionalOnboardingDevelopment('profile-api:save-professional-onboarding', {
+    userId,
+    stage: 'professional_categories.replace',
+    operationPayload: {
+      professional_id: professionalProfile.id,
+      category_ids: values.categoryIds,
+    },
+  });
+
+  try {
+    await replaceProfessionalCategories(professionalProfile.id, values.categoryIds);
+  } catch (categoriesError) {
+    logProfessionalOnboardingDevelopment('profile-api:save-professional-onboarding:error', {
+      userId,
+      stage: 'professional_categories.replace',
+      operationPayload: {
+        professional_id: professionalProfile.id,
+        category_ids: values.categoryIds,
+      },
+      error: categoriesError,
+    });
+    throw categoriesError;
+  }
+
+  const completionPayload = { onboarding_completed: true } as const;
+
+  logProfessionalOnboardingDevelopment('profile-api:save-professional-onboarding', {
+    userId,
+    stage: 'profiles.complete',
+    operationPayload: completionPayload,
+  });
 
   const { data: completedProfile, error: completionError } = await supabase
     .from('profiles')
-    .update({ onboarding_completed: true })
-    .eq('id', profileData.id)
+    .update(completionPayload)
+    .eq('id', userId)
     .select('*')
     .single();
 
   if (completionError) {
+    logProfessionalOnboardingDevelopment('profile-api:save-professional-onboarding:error', {
+      userId,
+      stage: 'profiles.complete',
+      operationPayload: completionPayload,
+      error: completionError,
+    });
     throw completionError;
   }
 

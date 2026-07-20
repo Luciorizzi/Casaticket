@@ -4,6 +4,9 @@ import {
   canSelfAssignRole,
   getAvailabilityLabel,
   getProfileDisplayName,
+  getServiceRequestStatusLabel,
+  getServiceRequestTypeLabel,
+  getServiceRequestUrgencyLabel,
   getCoverageSummary,
   isAvailabilityStatus,
   isSelectableMobileRole,
@@ -43,5 +46,11 @@ describe('domain guards', () => {
 
   it('formats the display name from profile data', () => {
     expect(getProfileDisplayName({ firstName: 'Camila', lastName: 'Prueba' })).toBe('Camila Prueba');
+  });
+
+  it('returns readable service request labels in Spanish', () => {
+    expect(getServiceRequestTypeLabel('diagnostic_visit')).toBe('Necesito visita diagnóstica');
+    expect(getServiceRequestUrgencyLabel('urgent')).toBe('Urgente');
+    expect(getServiceRequestStatusLabel('cancelled')).toBe('Cancelada');
   });
 });

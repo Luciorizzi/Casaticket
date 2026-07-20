@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   customerOnboardingSchema,
+  createServiceRequestSchema,
   professionalOnboardingSchema,
   roleSelectionSchema,
   signUpSchema,
@@ -110,6 +111,54 @@ describe('validation schemas', () => {
       professionalOnboardingSchema.safeParse({
         ...validPayload,
         bio: 'Muy corta.',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('validates customer service request creation', () => {
+    const validPayload = {
+      title: 'Arreglo de pérdida',
+      description: 'Tengo una pérdida debajo de la bacha de la cocina y necesito resolverla.',
+      categoryId: '550e8400-e29b-41d4-a716-446655440000',
+      unsureCategory: false,
+      requestType: 'specific_task' as const,
+      urgency: 'soon' as const,
+      addressText: 'Calle 123',
+      city: 'Lanus',
+      province: 'Buenos Aires',
+      preferredDate: undefined,
+      preferredTimeText: '',
+      availabilityNotes: '',
+    };
+
+    expect(createServiceRequestSchema.safeParse(validPayload).success).toBe(true);
+    expect(createServiceRequestSchema.safeParse({ ...validPayload, title: 'abc' }).success).toBe(false);
+    expect(createServiceRequestSchema.safeParse({ ...validPayload, categoryId: null }).success).toBe(false);
+    expect(
+      createServiceRequestSchema.safeParse({
+        ...validPayload,
+        categoryId: null,
+        unsureCategory: true,
+        requestType: 'unsure',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects preferred dates in the past', () => {
+    expect(
+      createServiceRequestSchema.safeParse({
+        title: 'Arreglo de pérdida',
+        description: 'Tengo una pérdida debajo de la bacha de la cocina y necesito resolverla.',
+        categoryId: null,
+        unsureCategory: true,
+        requestType: 'unsure',
+        urgency: 'scheduled',
+        addressText: 'Calle 123',
+        city: 'Lanus',
+        province: 'Buenos Aires',
+        preferredDate: '2020-01-01',
+        preferredTimeText: '',
+        availabilityNotes: '',
       }).success,
     ).toBe(false);
   });

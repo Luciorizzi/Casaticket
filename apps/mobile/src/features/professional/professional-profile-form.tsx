@@ -266,8 +266,8 @@ export function ProfessionalProfileForm({
         {currentStep < steps.length - 1 ? (
           <Button onPress={nextStep}>Continuar</Button>
         ) : (
-          <Button loading={loading || isSubmitting} onPress={handleSubmit(onSubmit)}>
-            {submitLabel}
+          <Button disabled={loading || isSubmitting} onPress={handleSubmit(onSubmit)}>
+            {loading || isSubmitting ? 'Guardando...' : submitLabel}
           </Button>
         )}
       </View>

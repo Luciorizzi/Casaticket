@@ -23,6 +23,7 @@ export function CustomerProfileForm({
   onSubmit,
   submitLabel,
 }: CustomerProfileFormProps) {
+  const saving = loading;
   const {
     control,
     handleSubmit,
@@ -106,8 +107,8 @@ export function CustomerProfileForm({
         La carga de avatar queda pendiente hasta cerrar una estrategia segura de selección y
         subida de archivos para Expo Go.
       </Text>
-      <Button loading={loading || isSubmitting} onPress={handleSubmit(onSubmit)}>
-        {submitLabel}
+      <Button disabled={saving || isSubmitting} onPress={handleSubmit(onSubmit)}>
+        {saving || isSubmitting ? 'Guardando...' : submitLabel}
       </Button>
     </Card>
   );
