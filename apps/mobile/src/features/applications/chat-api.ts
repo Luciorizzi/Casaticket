@@ -1,0 +1,134 @@
+import type { ApplicationConversation, ApplicationMessage } from '@casaticket/types';
+import { createMessageSchema, type CreateMessageInput } from '@casaticket/validation';
+
+import { logDevelopmentSupabaseError } from '@/lib/errors';
+import { supabase } from '@/lib/supabase';
+
+interface ConversationRow {
+  conversation_id: string;
+  application_id: string;
+  request_id: string;
+  customer_id: string;
+  professional_id: string;
+  status: ApplicationConversation['status'];
+  created_at: string;
+  updated_at: string;
+  unread_count: number | null;
+  can_send: boolean;
+}
+
+interface MessageRow {
+  message_id: string;
+  conversation_id: string;
+  sender_user_id: string;
+  body: string;
+  created_at: string;
+  edited_at: string | null;
+  deleted_at: string | null;
+}
+
+function mapConversation(row: ConversationRow): ApplicationConversation {
+  return {
+    id: row.conversation_id,
+    applicationId: row.application_id,
+    requestId: row.request_id,
+    customerId: row.customer_id,
+    professionalId: row.professional_id,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    unreadCount: row.unread_count ?? 0,
+    canSend: row.can_send,
+  };
+}
+
+function mapMessage(row: MessageRow): ApplicationMessage {
+  return {
+    id: row.message_id,
+    conversationId: row.conversation_id,
+    senderUserId: row.sender_user_id,
+    body: row.body,
+    createdAt: row.created_at,
+    editedAt: row.edited_at,
+    deletedAt: row.deleted_at,
+  };
+}
+
+export async function ensureApplicationConversation(
+  applicationId: string,
+): Promise<ApplicationConversation> {
+  const { data, error } = await supabase.rpc('ensure_application_conversation', {
+    p_application_id: applicationId,
+  });
+
+  if (error) {
+    logDevelopmentSupabaseError('application-chat:ensure-conversation', error);
+    throw error;
+  }
+
+  const rows = (data ?? []) as ConversationRow[];
+  const firstRow = rows[0];
+
+  if (!firstRow) {
+    throw new Error('No pudimos abrir esta conversación.');
+  }
+
+  return mapConversation(firstRow);
+}
+
+export async function listConversationMessages(
+  conversationId: string,
+): Promise<ApplicationMessage[]> {
+  const { data, error } = await supabase.rpc('list_conversation_messages', {
+    p_conversation_id: conversationId,
+  });
+
+  if (error) {
+    logDevelopmentSupabaseError('application-chat:list-messages', error);
+    throw error;
+  }
+
+  return ((data ?? []) as MessageRow[]).map((row) => mapMessage(row));
+}
+
+export async function sendConversationMessage({
+  body,
+  conversationId,
+}: CreateMessageInput & {
+  conversationId: string;
+}): Promise<ApplicationMessage> {
+  const parsed = createMessageSchema.parse({ body });
+  const { data, error } = await supabase.rpc('send_conversation_message', {
+    p_conversation_id: conversationId,
+    p_body: parsed.body,
+  });
+
+  if (error) {
+    logDevelopmentSupabaseError('application-chat:send-message', error);
+    throw error;
+  }
+
+  const rows = (data ?? []) as MessageRow[];
+  const firstRow = rows[0];
+
+  if (!firstRow) {
+    throw new Error('No pudimos enviar el mensaje.');
+  }
+
+  return mapMessage(firstRow);
+}
+
+export async function markConversationRead(conversationId: string): Promise<number> {
+  const { data, error } = await supabase.rpc('mark_conversation_read', {
+    p_conversation_id: conversationId,
+  });
+
+  if (error) {
+    logDevelopmentSupabaseError('application-chat:mark-read', error);
+    throw error;
+  }
+
+  const rows = (data ?? []) as { unread_count: number }[];
+
+  return rows[0]?.unread_count ?? 0;
+}

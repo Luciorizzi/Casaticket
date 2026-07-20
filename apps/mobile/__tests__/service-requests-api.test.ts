@@ -19,6 +19,7 @@ const mockUpdate = jest.fn((payload: Record<string, unknown>) => {
   void payload;
   return { eq: mockCancelEqId };
 });
+const mockRpc = jest.fn();
 const mockFrom = jest.fn((table: string) => {
   void table;
 
@@ -36,13 +37,16 @@ jest.mock('@/lib/supabase', () => ({
       getUser: () => mockGetUser(),
     },
     from: (table: string) => mockFrom(table),
+    rpc: (...args: unknown[]) => mockRpc(...args),
   },
 }));
 
 import {
   cancelOwnServiceRequest,
   createServiceRequest,
+  listCustomerRequestApplications,
   listOwnServiceRequests,
+  selectProfessionalForRequest,
 } from '@/features/customer/service-requests-api';
 
 function createServiceRequestRow(overrides: Record<string, unknown> = {}) {
@@ -61,6 +65,8 @@ function createServiceRequestRow(overrides: Record<string, unknown> = {}) {
     preferred_time_text: null,
     availability_notes: null,
     status: 'published',
+    selected_professional_id: null,
+    selected_at: null,
     published_at: '2026-07-20T12:00:00.000Z',
     created_at: '2026-07-20T12:00:00.000Z',
     updated_at: '2026-07-20T12:00:00.000Z',
@@ -98,6 +104,7 @@ describe('service request api', () => {
       data: createServiceRequestRow({ status: 'cancelled' }),
       error: null,
     });
+    mockRpc.mockResolvedValue({ data: [], error: null });
   });
 
   afterEach(() => {
@@ -164,5 +171,79 @@ describe('service request api', () => {
     expect(mockUpdate).toHaveBeenCalledWith({ status: 'cancelled' });
     expect(mockCancelEqId).toHaveBeenCalledWith('id', 'request-1');
     expect(mockCancelEqStatus).toHaveBeenCalledWith('status', 'published');
+  });
+
+  it('lists customer applications through the safe RPC', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: [
+        {
+          application_id: 'application-1',
+          request_id: 'request-1',
+          professional_id: 'professional-1',
+          status: 'submitted',
+          message: 'Puedo ir esta semana.',
+          proposal_type: 'diagnostic_visit',
+          visit_price: '5000',
+          estimated_price: null,
+          estimated_duration_text: 'Una visita',
+          availability_text: 'Martes',
+          created_at: '2026-07-20T12:00:00.000Z',
+          conversation_id: 'conversation-1',
+          unread_count: 2,
+          professional_first_name: 'Pro',
+          professional_last_name: 'Demo',
+          professional_bio: 'Bio publica',
+          professional_years_experience: 8,
+          professional_base_city: 'Lanus',
+          professional_service_radius_km: 20,
+          professional_verification_status: 'pending',
+          professional_category_names: ['Plomeria'],
+          professional_phone: 'no debe mapearse',
+        },
+      ],
+      error: null,
+    });
+
+    const applications = await listCustomerRequestApplications('request-1');
+
+    expect(mockRpc).toHaveBeenCalledWith('list_customer_request_applications', {
+      p_request_id: 'request-1',
+    });
+    expect(applications[0]).toMatchObject({
+      id: 'application-1',
+      professionalId: 'professional-1',
+      professionalFirstName: 'Pro',
+      unreadCount: 2,
+      visitPrice: 5000,
+    });
+    expect(applications[0]).not.toHaveProperty('professionalPhone');
+  });
+
+  it('selects a professional through the atomic RPC', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: [
+        {
+          request_id: 'request-1',
+          request_status: 'professional_selected',
+          selected_professional_id: 'professional-1',
+          selected_application_id: 'application-1',
+          selected_at: '2026-07-20T13:00:00.000Z',
+        },
+      ],
+      error: null,
+    });
+
+    const selection = await selectProfessionalForRequest('request-1', 'application-1');
+
+    expect(mockRpc).toHaveBeenCalledWith('select_professional_for_request', {
+      p_request_id: 'request-1',
+      p_application_id: 'application-1',
+    });
+    expect(selection).toMatchObject({
+      requestId: 'request-1',
+      requestStatus: 'professional_selected',
+      selectedProfessionalId: 'professional-1',
+      selectedApplicationId: 'application-1',
+    });
   });
 });

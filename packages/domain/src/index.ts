@@ -1,5 +1,8 @@
 import type {
   AppRole,
+  ApplicationProposalType,
+  ApplicationStatus,
+  ConversationStatus,
   AvailabilityStatus,
   Profile,
   SelectableMobileRole,
@@ -42,8 +45,31 @@ export const SERVICE_REQUEST_URGENCIES = [
 export const SERVICE_REQUEST_STATUSES = [
   'draft',
   'published',
+  'receiving_applications',
+  'professional_selected',
   'cancelled',
 ] as const satisfies readonly ServiceRequestStatus[];
+
+export const APPLICATION_PROPOSAL_TYPES = [
+  'diagnostic_visit',
+  'preliminary_quote',
+  'ask_for_details',
+  'direct_service',
+] as const satisfies readonly ApplicationProposalType[];
+
+export const APPLICATION_STATUSES = [
+  'submitted',
+  'viewed',
+  'withdrawn',
+  'selected',
+  'rejected',
+] as const satisfies readonly ApplicationStatus[];
+
+export const CONVERSATION_STATUSES = [
+  'active',
+  'read_only',
+  'closed',
+] as const satisfies readonly ConversationStatus[];
 
 export function isSelectableMobileRole(role: AppRole): role is SelectableMobileRole {
   return MOBILE_SELECTABLE_ROLES.includes(role as SelectableMobileRole);
@@ -112,9 +138,60 @@ export function getServiceRequestStatusLabel(status: ServiceRequestStatus): stri
       return 'Borrador';
     case 'published':
       return 'Publicada';
+    case 'receiving_applications':
+      return 'Recibiendo postulaciones';
+    case 'professional_selected':
+      return 'Profesional seleccionado';
     case 'cancelled':
       return 'Cancelada';
   }
+}
+
+export function getApplicationProposalTypeLabel(type: ApplicationProposalType): string {
+  switch (type) {
+    case 'diagnostic_visit':
+      return 'Visita diagnóstica';
+    case 'preliminary_quote':
+      return 'Cotización preliminar';
+    case 'ask_for_details':
+      return 'Pedir más detalles';
+    case 'direct_service':
+      return 'Servicio directo';
+  }
+}
+
+export function getApplicationStatusLabel(status: ApplicationStatus): string {
+  switch (status) {
+    case 'submitted':
+      return 'Enviada';
+    case 'viewed':
+      return 'Vista';
+    case 'withdrawn':
+      return 'Retirada';
+    case 'selected':
+      return 'Seleccionada';
+    case 'rejected':
+      return 'Rechazada';
+  }
+}
+
+export function getConversationStatusLabel(status: ConversationStatus): string {
+  switch (status) {
+    case 'active':
+      return 'Activa';
+    case 'read_only':
+      return 'Solo lectura';
+    case 'closed':
+      return 'Cerrada';
+  }
+}
+
+export function hasPotentialContactInfo(value: string): boolean {
+  const emailPattern = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+  const urlPattern = /\b(?:https?:\/\/|www\.)\S+/i;
+  const phonePattern = /(?:\+?\d[\s().-]?){8,}/;
+
+  return emailPattern.test(value) || urlPattern.test(value) || phonePattern.test(value);
 }
 
 export function getProfileDisplayName(profile: Pick<Profile, 'firstName' | 'lastName'>): string {

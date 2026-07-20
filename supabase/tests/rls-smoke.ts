@@ -3,6 +3,12 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 const demoPassword = 'CasaTicket123!';
 const bootstrapUserEmail = 'bootstrap.profile@casaticket.local';
 
+interface ProfessionalOpportunitySmokeRow {
+  request_id: string;
+  address_text?: string;
+  customer_id?: string;
+}
+
 function requireEnv(value: string | undefined, name: string): string {
   if (!value) {
     throw new Error(`Missing environment variable: ${name}`);
@@ -266,9 +272,13 @@ async function main() {
     throw new Error('Bootstrap user unexpectedly modified another user role.');
   }
 
-  const serviceRequestCategoryId = categoryQuery.data?.[0]?.id;
+  const serviceRequestCategoryId =
+    categoryQuery.data?.find((category) => category.slug === 'plomeria')?.id ?? categoryQuery.data?.[0]?.id;
+  const incompatibleServiceRequestCategoryId = categoryQuery.data?.find(
+    (category) => category.id !== serviceRequestCategoryId,
+  )?.id;
 
-  if (!serviceRequestCategoryId) {
+  if (!serviceRequestCategoryId || !incompatibleServiceRequestCategoryId) {
     throw new Error('No category available for service request smoke test.');
   }
 
@@ -294,6 +304,755 @@ async function main() {
     throw new Error(
       `Customer could not create own service request: ${ownServiceRequestInsert.error?.message ?? 'unknown error'}`,
     );
+  }
+
+  const bootstrapProfessionalCompletion = await bootstrapProfessionalClient
+    .from('profiles')
+    .update({ onboarding_completed: true })
+    .eq('id', createdBootstrapProfessionalUser.id)
+    .select('id, onboarding_completed')
+    .single();
+
+  if (
+    bootstrapProfessionalCompletion.error ||
+    !bootstrapProfessionalCompletion.data.onboarding_completed
+  ) {
+    throw new Error(
+      `Bootstrap professional onboarding completion failed: ${bootstrapProfessionalCompletion.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const bootstrapProfessionalProfile = await bootstrapProfessionalClient
+    .from('professional_profiles')
+    .insert({
+      user_id: createdBootstrapProfessionalUser.id,
+      bio: 'Perfil profesional de smoke test con rubro no compatible.',
+      years_experience: 3,
+      base_city: 'Lanus',
+      service_radius_km: 20,
+      availability_status: 'available',
+    })
+    .select('id')
+    .single();
+
+  if (bootstrapProfessionalProfile.error || !bootstrapProfessionalProfile.data) {
+    throw new Error(
+      `Bootstrap professional profile creation failed: ${bootstrapProfessionalProfile.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const bootstrapProfessionalCategory = await bootstrapProfessionalClient
+    .from('professional_categories')
+    .insert({
+      professional_id: bootstrapProfessionalProfile.data.id,
+      category_id: incompatibleServiceRequestCategoryId,
+    });
+
+  if (bootstrapProfessionalCategory.error) {
+    throw new Error(
+      `Bootstrap professional category creation failed: ${bootstrapProfessionalCategory.error.message}`,
+    );
+  }
+
+  const compatibleOpportunityRead = await professionalClient.rpc('list_professional_opportunities');
+
+  if (compatibleOpportunityRead.error) {
+    throw new Error(`Professional could not read compatible opportunities: ${compatibleOpportunityRead.error.message}`);
+  }
+
+  const compatibleOpportunities = (compatibleOpportunityRead.data ?? []) as ProfessionalOpportunitySmokeRow[];
+  const compatibleOpportunity = compatibleOpportunities.find(
+    (opportunity) => opportunity.request_id === ownServiceRequestInsert.data.id,
+  );
+
+  if (!compatibleOpportunity) {
+    throw new Error('Compatible professional did not see a matching published service request.');
+  }
+
+  if ('address_text' in compatibleOpportunity || 'customer_id' in compatibleOpportunity) {
+    throw new Error('Professional opportunity unexpectedly exposed private customer data.');
+  }
+
+  const incompatibleOpportunityRead = await bootstrapProfessionalClient.rpc('list_professional_opportunities');
+
+  if (incompatibleOpportunityRead.error) {
+    throw new Error(
+      `Incompatible professional opportunity read failed: ${incompatibleOpportunityRead.error.message}`,
+    );
+  }
+
+  if (
+    ((incompatibleOpportunityRead.data ?? []) as ProfessionalOpportunitySmokeRow[]).some(
+      (opportunity) => opportunity.request_id === ownServiceRequestInsert.data.id,
+    )
+  ) {
+    throw new Error('Incompatible professional unexpectedly saw a category-specific request.');
+  }
+
+  const uncategorizedServiceRequestInsert = await customerClient
+    .from('service_requests')
+    .insert({
+      customer_id: customerId,
+      category_id: null,
+      title: 'No se que rubro necesito',
+      description: 'Tengo un problema general en casa y no se a que rubro corresponde todavia.',
+      request_type: 'unsure',
+      urgency: 'flexible',
+      address_text: 'Calle 789',
+      city: 'Lanus',
+      province: 'Buenos Aires',
+      status: 'published',
+      published_at: new Date().toISOString(),
+    })
+    .select('id')
+    .single();
+
+  if (uncategorizedServiceRequestInsert.error || !uncategorizedServiceRequestInsert.data) {
+    throw new Error(
+      `Customer could not create uncategorized service request: ${uncategorizedServiceRequestInsert.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const uncategorizedOpportunityRead = await bootstrapProfessionalClient.rpc('list_professional_opportunities');
+
+  if (
+    uncategorizedOpportunityRead.error ||
+    !((uncategorizedOpportunityRead.data ?? []) as ProfessionalOpportunitySmokeRow[]).some(
+      (opportunity) => opportunity.request_id === uncategorizedServiceRequestInsert.data.id,
+    )
+  ) {
+    throw new Error(
+      `Uncategorized service request was not visible to active professional: ${uncategorizedOpportunityRead.error?.message ?? 'not found'}`,
+    );
+  }
+
+  const ownApplicationInsert = await professionalClient
+    .from('applications')
+    .insert({
+      request_id: ownServiceRequestInsert.data.id,
+      professional_id: professionalProfile.id,
+      message: 'Puedo revisar la perdida esta semana y llevar las herramientas necesarias.',
+      proposal_type: 'diagnostic_visit',
+      visit_price: 5000,
+      estimated_price: null,
+      estimated_duration_text: 'Una visita breve',
+      availability_text: 'Martes o jueves por la tarde',
+      status: 'submitted',
+    })
+    .select('id, status')
+    .single();
+
+  if (ownApplicationInsert.error || ownApplicationInsert.data.status !== 'submitted') {
+    throw new Error(
+      `Professional could not create own application: ${ownApplicationInsert.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const duplicateApplicationInsert = await professionalClient
+    .from('applications')
+    .insert({
+      request_id: ownServiceRequestInsert.data.id,
+      professional_id: professionalProfile.id,
+      message: 'Intento duplicado de postulacion para validar constraint unico.',
+      proposal_type: 'diagnostic_visit',
+      visit_price: 5000,
+      estimated_price: null,
+      estimated_duration_text: null,
+      availability_text: 'Viernes por la tarde',
+      status: 'submitted',
+    })
+    .select('id')
+    .single();
+
+  if (!duplicateApplicationInsert.error) {
+    throw new Error('Professional unexpectedly created a duplicate application.');
+  }
+
+  const foreignProfessionalApplicationInsert = await professionalClient
+    .from('applications')
+    .insert({
+      request_id: ownServiceRequestInsert.data.id,
+      professional_id: bootstrapProfessionalProfile.data.id,
+      message: 'Intento de postular a nombre de otro profesional.',
+      proposal_type: 'ask_for_details',
+      visit_price: null,
+      estimated_price: null,
+      estimated_duration_text: null,
+      availability_text: 'Necesito mas detalles',
+      status: 'submitted',
+    })
+    .select('id')
+    .single();
+
+  if (!foreignProfessionalApplicationInsert.error) {
+    throw new Error('Professional unexpectedly applied on behalf of another professional.');
+  }
+
+  const foreignApplicationRead = await bootstrapProfessionalClient
+    .from('applications')
+    .select('id')
+    .eq('id', ownApplicationInsert.data.id);
+
+  if (foreignApplicationRead.error) {
+    throw new Error(`Unexpected foreign application read error: ${foreignApplicationRead.error.message}`);
+  }
+
+  if ((foreignApplicationRead.data ?? []).length !== 0) {
+    throw new Error('Professional unexpectedly read another professional application.');
+  }
+
+  const selectionServiceRequestInsert = await customerClient
+    .from('service_requests')
+    .insert({
+      customer_id: customerId,
+      category_id: null,
+      title: 'Solicitud para seleccionar profesional',
+      description: 'Solicitud de smoke test con dos postulaciones activas.',
+      request_type: 'unsure',
+      urgency: 'flexible',
+      address_text: 'Calle seleccion 123',
+      city: 'Lanus',
+      province: 'Buenos Aires',
+      status: 'published',
+      published_at: new Date().toISOString(),
+    })
+    .select('id, status')
+    .single();
+
+  if (selectionServiceRequestInsert.error || !selectionServiceRequestInsert.data) {
+    throw new Error(
+      `Customer could not create selection service request: ${selectionServiceRequestInsert.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const selectedCandidateApplication = await professionalClient
+    .from('applications')
+    .insert({
+      request_id: selectionServiceRequestInsert.data.id,
+      professional_id: professionalProfile.id,
+      message: 'Puedo resolver esta solicitud y coordinar una visita.',
+      proposal_type: 'diagnostic_visit',
+      visit_price: 6000,
+      estimated_price: null,
+      estimated_duration_text: 'Una visita',
+      availability_text: 'Miercoles por la tarde',
+      status: 'submitted',
+    })
+    .select('id, status')
+    .single();
+
+  if (selectedCandidateApplication.error || selectedCandidateApplication.data.status !== 'submitted') {
+    throw new Error(
+      `Selected candidate application insert failed: ${selectedCandidateApplication.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const rejectedCandidateApplication = await bootstrapProfessionalClient
+    .from('applications')
+    .insert({
+      request_id: selectionServiceRequestInsert.data.id,
+      professional_id: bootstrapProfessionalProfile.data.id,
+      message: 'Tambien puedo presentarme para validar rechazo automatico.',
+      proposal_type: 'ask_for_details',
+      visit_price: null,
+      estimated_price: null,
+      estimated_duration_text: null,
+      availability_text: 'Viernes',
+      status: 'submitted',
+    })
+    .select('id, status')
+    .single();
+
+  if (rejectedCandidateApplication.error || rejectedCandidateApplication.data.status !== 'submitted') {
+    throw new Error(
+      `Rejected candidate application insert failed: ${rejectedCandidateApplication.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const ownApplicationsRead = await customerClient.rpc('list_customer_request_applications', {
+    p_request_id: selectionServiceRequestInsert.data.id,
+  });
+
+  if (ownApplicationsRead.error || (ownApplicationsRead.data ?? []).length !== 2) {
+    throw new Error(
+      `Customer could not read own request applications: ${ownApplicationsRead.error?.message ?? 'unexpected count'}`,
+    );
+  }
+
+  if (
+    ((ownApplicationsRead.data ?? []) as Record<string, unknown>[]).some(
+      (application) => 'professional_phone' in application || 'email' in application,
+    )
+  ) {
+    throw new Error('Customer applications RPC exposed private professional data.');
+  }
+
+  const foreignCustomerApplicationsRead = await bootstrapClient.rpc('list_customer_request_applications', {
+    p_request_id: selectionServiceRequestInsert.data.id,
+  });
+
+  if (foreignCustomerApplicationsRead.error || (foreignCustomerApplicationsRead.data ?? []).length !== 0) {
+    throw new Error(
+      `Foreign customer unexpectedly read applications: ${foreignCustomerApplicationsRead.error?.message ?? 'unexpected rows'}`,
+    );
+  }
+
+  const directApplicationSelectionAttempt = await customerClient
+    .from('applications')
+    .update({ status: 'selected' })
+    .eq('id', selectedCandidateApplication.data.id)
+    .select('id, status')
+    .single();
+
+  if (!directApplicationSelectionAttempt.error) {
+    throw new Error('Customer unexpectedly selected an application with direct update.');
+  }
+
+  const viewedApplication = await customerClient.rpc('mark_customer_application_viewed', {
+    p_application_id: selectedCandidateApplication.data.id,
+  });
+
+  if (
+    viewedApplication.error ||
+    viewedApplication.data?.[0]?.application_id !== selectedCandidateApplication.data.id ||
+    viewedApplication.data?.[0]?.status !== 'viewed'
+  ) {
+    throw new Error(
+      `Customer could not mark application as viewed: ${viewedApplication.error?.message ?? 'unexpected result'}`,
+    );
+  }
+
+  const selectedConversationRead = await customerClient
+    .from('conversations')
+    .select('id, status')
+    .eq('application_id', selectedCandidateApplication.data.id)
+    .single();
+
+  if (selectedConversationRead.error || selectedConversationRead.data.status !== 'active') {
+    throw new Error(
+      `Customer could not read own application conversation: ${selectedConversationRead.error?.message ?? 'unexpected status'}`,
+    );
+  }
+
+  const professionalConversationRead = await professionalClient
+    .from('conversations')
+    .select('id')
+    .eq('id', selectedConversationRead.data.id)
+    .single();
+
+  if (professionalConversationRead.error || professionalConversationRead.data.id !== selectedConversationRead.data.id) {
+    throw new Error(
+      `Professional could not read own conversation: ${professionalConversationRead.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const thirdPartyConversationRead = await bootstrapClient
+    .from('conversations')
+    .select('id')
+    .eq('id', selectedConversationRead.data.id);
+
+  if (thirdPartyConversationRead.error || (thirdPartyConversationRead.data ?? []).length !== 0) {
+    throw new Error(
+      `Third party unexpectedly read conversation: ${thirdPartyConversationRead.error?.message ?? 'unexpected rows'}`,
+    );
+  }
+
+  const mismatchedSenderMessage = await customerClient
+    .from('messages')
+    .insert({
+      conversation_id: selectedConversationRead.data.id,
+      sender_user_id: professionalId,
+      body: 'Intento de enviar con otro sender.',
+    })
+    .select('id')
+    .single();
+
+  if (!mismatchedSenderMessage.error) {
+    throw new Error('Customer unexpectedly inserted a message with a mismatched sender.');
+  }
+
+  const emptyMessageAttempt = await customerClient
+    .from('messages')
+    .insert({
+      conversation_id: selectedConversationRead.data.id,
+      sender_user_id: customerId,
+      body: '   ',
+    })
+    .select('id')
+    .single();
+
+  if (!emptyMessageAttempt.error) {
+    throw new Error('Customer unexpectedly inserted an empty message.');
+  }
+
+  const customerMessageInsert = await customerClient
+    .from('messages')
+    .insert({
+      conversation_id: selectedConversationRead.data.id,
+      sender_user_id: customerId,
+      body: 'Hola, queria consultar disponibilidad antes de elegir.',
+    })
+    .select('id, body')
+    .single();
+
+  if (customerMessageInsert.error || customerMessageInsert.data.body.trim().length === 0) {
+    throw new Error(
+      `Customer could not send message: ${customerMessageInsert.error?.message ?? 'unexpected result'}`,
+    );
+  }
+
+  const professionalMessagesRead = await professionalClient
+    .from('messages')
+    .select('id')
+    .eq('conversation_id', selectedConversationRead.data.id);
+
+  if (professionalMessagesRead.error || (professionalMessagesRead.data ?? []).length !== 1) {
+    throw new Error(
+      `Professional could not read customer message: ${professionalMessagesRead.error?.message ?? 'unexpected count'}`,
+    );
+  }
+
+  const thirdPartyMessagesRead = await bootstrapClient
+    .from('messages')
+    .select('id')
+    .eq('conversation_id', selectedConversationRead.data.id);
+
+  if (thirdPartyMessagesRead.error || (thirdPartyMessagesRead.data ?? []).length !== 0) {
+    throw new Error(
+      `Third party unexpectedly read messages: ${thirdPartyMessagesRead.error?.message ?? 'unexpected rows'}`,
+    );
+  }
+
+  const thirdPartyMessageInsert = await bootstrapClient
+    .from('messages')
+    .insert({
+      conversation_id: selectedConversationRead.data.id,
+      sender_user_id: createdBootstrapUser.id,
+      body: 'Intento de tercero.',
+    })
+    .select('id')
+    .single();
+
+  if (!thirdPartyMessageInsert.error) {
+    throw new Error('Third party unexpectedly wrote a conversation message.');
+  }
+
+  const professionalUnreadConversation = await professionalClient.rpc('ensure_application_conversation', {
+    p_application_id: selectedCandidateApplication.data.id,
+  });
+
+  if (
+    professionalUnreadConversation.error ||
+    professionalUnreadConversation.data?.[0]?.unread_count !== 1
+  ) {
+    throw new Error(
+      `Professional unread count was not updated: ${professionalUnreadConversation.error?.message ?? 'unexpected count'}`,
+    );
+  }
+
+  const professionalReply = await professionalClient.rpc('send_conversation_message', {
+    p_conversation_id: selectedConversationRead.data.id,
+    p_body: 'Puedo pasar el miercoles por la tarde.',
+  });
+
+  if (professionalReply.error || professionalReply.data?.[0]?.sender_user_id !== professionalId) {
+    throw new Error(
+      `Professional could not reply in conversation: ${professionalReply.error?.message ?? 'unexpected result'}`,
+    );
+  }
+
+  const customerUnreadConversation = await customerClient.rpc('ensure_application_conversation', {
+    p_application_id: selectedCandidateApplication.data.id,
+  });
+
+  if (
+    customerUnreadConversation.error ||
+    customerUnreadConversation.data?.[0]?.unread_count !== 1
+  ) {
+    throw new Error(
+      `Customer unread count was not updated: ${customerUnreadConversation.error?.message ?? 'unexpected count'}`,
+    );
+  }
+
+  const duplicateConversationInsert = await adminClient
+    .from('conversations')
+    .insert({
+      application_id: selectedCandidateApplication.data.id,
+      request_id: selectionServiceRequestInsert.data.id,
+      customer_id: customerId,
+      professional_id: professionalProfile.id,
+    })
+    .select('id')
+    .single();
+
+  if (!duplicateConversationInsert.error) {
+    throw new Error('Database unexpectedly allowed a duplicate conversation for one application.');
+  }
+
+  const otherCustomerSelectionAttempt = await bootstrapClient.rpc('select_professional_for_request', {
+    p_request_id: selectionServiceRequestInsert.data.id,
+    p_application_id: selectedCandidateApplication.data.id,
+  });
+
+  if (!otherCustomerSelectionAttempt.error) {
+    throw new Error('Foreign customer unexpectedly selected a professional.');
+  }
+
+  const withdrawnSelectionServiceRequest = await customerClient
+    .from('service_requests')
+    .insert({
+      customer_id: customerId,
+      category_id: null,
+      title: 'Solicitud con postulacion retirada',
+      description: 'Solicitud para validar que no se pueda seleccionar una postulacion retirada.',
+      request_type: 'unsure',
+      urgency: 'flexible',
+      address_text: 'Calle retirada 456',
+      city: 'Lanus',
+      province: 'Buenos Aires',
+      status: 'published',
+      published_at: new Date().toISOString(),
+    })
+    .select('id')
+    .single();
+
+  if (withdrawnSelectionServiceRequest.error || !withdrawnSelectionServiceRequest.data) {
+    throw new Error(
+      `Customer could not create withdrawn-selection request: ${withdrawnSelectionServiceRequest.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const withdrawnCandidateApplication = await professionalClient
+    .from('applications')
+    .insert({
+      request_id: withdrawnSelectionServiceRequest.data.id,
+      professional_id: professionalProfile.id,
+      message: 'Postulacion que sera retirada antes de seleccionar.',
+      proposal_type: 'diagnostic_visit',
+      visit_price: 6000,
+      estimated_price: null,
+      estimated_duration_text: null,
+      availability_text: 'Miercoles',
+      status: 'submitted',
+    })
+    .select('id')
+    .single();
+
+  if (withdrawnCandidateApplication.error || !withdrawnCandidateApplication.data) {
+    throw new Error(
+      `Withdrawn candidate application insert failed: ${withdrawnCandidateApplication.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const withdrawnCandidateUpdate = await professionalClient
+    .from('applications')
+    .update({ status: 'withdrawn', withdrawn_at: new Date().toISOString() })
+    .eq('id', withdrawnCandidateApplication.data.id)
+    .select('id, status')
+    .single();
+
+  if (withdrawnCandidateUpdate.error || withdrawnCandidateUpdate.data.status !== 'withdrawn') {
+    throw new Error(
+      `Professional could not withdraw selection candidate: ${withdrawnCandidateUpdate.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const withdrawnConversationRead = await customerClient
+    .from('conversations')
+    .select('id, status')
+    .eq('application_id', withdrawnCandidateApplication.data.id)
+    .single();
+
+  if (withdrawnConversationRead.error || withdrawnConversationRead.data.status !== 'read_only') {
+    throw new Error(
+      `Withdrawn application conversation did not become read-only: ${withdrawnConversationRead.error?.message ?? 'unexpected status'}`,
+    );
+  }
+
+  const withdrawnConversationMessageAttempt = await customerClient.rpc('send_conversation_message', {
+    p_conversation_id: withdrawnConversationRead.data.id,
+    p_body: 'No deberia poder enviarse.',
+  });
+
+  if (!withdrawnConversationMessageAttempt.error) {
+    throw new Error('Customer unexpectedly sent a message to a withdrawn application conversation.');
+  }
+
+  const withdrawnSelectionAttempt = await customerClient.rpc('select_professional_for_request', {
+    p_request_id: withdrawnSelectionServiceRequest.data.id,
+    p_application_id: withdrawnCandidateApplication.data.id,
+  });
+
+  if (!withdrawnSelectionAttempt.error) {
+    throw new Error('Customer unexpectedly selected a withdrawn application.');
+  }
+
+  const validSelection = await customerClient.rpc('select_professional_for_request', {
+    p_request_id: selectionServiceRequestInsert.data.id,
+    p_application_id: selectedCandidateApplication.data.id,
+  });
+
+  if (
+    validSelection.error ||
+    validSelection.data?.[0]?.request_status !== 'professional_selected' ||
+    validSelection.data?.[0]?.selected_professional_id !== professionalProfile.id
+  ) {
+    throw new Error(`Valid professional selection failed: ${validSelection.error?.message ?? 'unexpected result'}`);
+  }
+
+  const selectedServiceRequestRead = await customerClient
+    .from('service_requests')
+    .select('id, status, selected_professional_id')
+    .eq('id', selectionServiceRequestInsert.data.id)
+    .single();
+
+  if (
+    selectedServiceRequestRead.error ||
+    selectedServiceRequestRead.data.status !== 'professional_selected' ||
+    selectedServiceRequestRead.data.selected_professional_id !== professionalProfile.id
+  ) {
+    throw new Error(
+      `Selected service request was not persisted correctly: ${selectedServiceRequestRead.error?.message ?? 'unexpected result'}`,
+    );
+  }
+
+  const selectedApplicationRead = await professionalClient
+    .from('applications')
+    .select('id, status')
+    .eq('id', selectedCandidateApplication.data.id)
+    .single();
+
+  if (selectedApplicationRead.error || selectedApplicationRead.data.status !== 'selected') {
+    throw new Error(
+      `Chosen application was not selected: ${selectedApplicationRead.error?.message ?? 'unexpected status'}`,
+    );
+  }
+
+  const rejectedApplicationRead = await bootstrapProfessionalClient
+    .from('applications')
+    .select('id, status')
+    .eq('id', rejectedCandidateApplication.data.id)
+    .single();
+
+  if (rejectedApplicationRead.error || rejectedApplicationRead.data.status !== 'rejected') {
+    throw new Error(
+      `Other application was not rejected: ${rejectedApplicationRead.error?.message ?? 'unexpected status'}`,
+    );
+  }
+
+  const selectedConversationAfterSelection = await customerClient
+    .from('conversations')
+    .select('id, status')
+    .eq('application_id', selectedCandidateApplication.data.id)
+    .single();
+
+  if (
+    selectedConversationAfterSelection.error ||
+    selectedConversationAfterSelection.data.status !== 'active'
+  ) {
+    throw new Error(
+      `Selected conversation did not remain active: ${selectedConversationAfterSelection.error?.message ?? 'unexpected status'}`,
+    );
+  }
+
+  const selectedConversationMessageAfterSelection = await customerClient.rpc('send_conversation_message', {
+    p_conversation_id: selectedConversationAfterSelection.data.id,
+    p_body: 'Gracias, te selecciono para avanzar.',
+  });
+
+  if (selectedConversationMessageAfterSelection.error) {
+    throw new Error(
+      `Selected conversation did not accept messages: ${selectedConversationMessageAfterSelection.error.message}`,
+    );
+  }
+
+  const rejectedConversationAfterSelection = await bootstrapProfessionalClient
+    .from('conversations')
+    .select('id, status')
+    .eq('application_id', rejectedCandidateApplication.data.id)
+    .single();
+
+  if (
+    rejectedConversationAfterSelection.error ||
+    rejectedConversationAfterSelection.data.status !== 'read_only'
+  ) {
+    throw new Error(
+      `Rejected conversation did not become read-only: ${rejectedConversationAfterSelection.error?.message ?? 'unexpected status'}`,
+    );
+  }
+
+  const rejectedConversationMessageAttempt = await bootstrapProfessionalClient.rpc('send_conversation_message', {
+    p_conversation_id: rejectedConversationAfterSelection.data.id,
+    p_body: 'No deberia poder responder tras el rechazo.',
+  });
+
+  if (!rejectedConversationMessageAttempt.error) {
+    throw new Error('Rejected application conversation unexpectedly accepted a message.');
+  }
+
+  const doubleSelectionAttempt = await customerClient.rpc('select_professional_for_request', {
+    p_request_id: selectionServiceRequestInsert.data.id,
+    p_application_id: rejectedCandidateApplication.data.id,
+  });
+
+  if (!doubleSelectionAttempt.error) {
+    throw new Error('Customer unexpectedly selected a second professional.');
+  }
+
+  const selectedProfessionalJobs = await professionalClient.rpc('list_professional_selected_jobs');
+
+  if (
+    selectedProfessionalJobs.error ||
+    !((selectedProfessionalJobs.data ?? []) as { request_id: string }[]).some(
+      (job) => job.request_id === selectionServiceRequestInsert.data.id,
+    )
+  ) {
+    throw new Error(
+      `Selected professional did not see selected job: ${selectedProfessionalJobs.error?.message ?? 'not found'}`,
+    );
+  }
+
+  const ownApplicationWithdraw = await professionalClient
+    .from('applications')
+    .update({ status: 'withdrawn', withdrawn_at: new Date().toISOString() })
+    .eq('id', ownApplicationInsert.data.id)
+    .select('id, status')
+    .single();
+
+  if (ownApplicationWithdraw.error || ownApplicationWithdraw.data.status !== 'withdrawn') {
+    throw new Error(
+      `Professional could not withdraw own application: ${ownApplicationWithdraw.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const { data: selectedApplication, error: selectedApplicationError } = await adminClient
+    .from('applications')
+    .insert({
+      request_id: uncategorizedServiceRequestInsert.data.id,
+      professional_id: bootstrapProfessionalProfile.data.id,
+      message: 'Postulacion seleccionada creada por service role para probar bloqueo de retiro.',
+      proposal_type: 'ask_for_details',
+      availability_text: 'Disponible',
+      status: 'selected',
+    })
+    .select('id')
+    .single();
+
+  if (selectedApplicationError || !selectedApplication) {
+    throw new Error(
+      `Unable to create selected application for smoke test: ${selectedApplicationError?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const selectedApplicationWithdrawAttempt = await bootstrapProfessionalClient
+    .from('applications')
+    .update({ status: 'withdrawn', withdrawn_at: new Date().toISOString() })
+    .eq('id', selectedApplication.id)
+    .select('id, status')
+    .single();
+
+  if (!selectedApplicationWithdrawAttempt.error) {
+    throw new Error('Professional unexpectedly withdrew a selected application.');
   }
 
   const foreignServiceRequestInsert = await bootstrapClient
@@ -364,6 +1123,66 @@ async function main() {
 
   if (!serviceRequestReactivationAttempt.error) {
     throw new Error('Customer unexpectedly reactivated a cancelled service request.');
+  }
+
+  const cancelledOnlyServiceRequest = await customerClient
+    .from('service_requests')
+    .insert({
+      customer_id: customerId,
+      category_id: serviceRequestCategoryId,
+      title: 'Solicitud cancelada sin postulaciones',
+      description: 'Solicitud publicada y cancelada para validar que no acepte postulaciones.',
+      request_type: 'specific_task',
+      urgency: 'soon',
+      address_text: 'Calle 999',
+      city: 'Lanus',
+      province: 'Buenos Aires',
+      status: 'published',
+      published_at: new Date().toISOString(),
+    })
+    .select('id')
+    .single();
+
+  if (cancelledOnlyServiceRequest.error || !cancelledOnlyServiceRequest.data) {
+    throw new Error(
+      `Customer could not create cancellable service request: ${cancelledOnlyServiceRequest.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const cancelledOnlyServiceRequestCancel = await customerClient
+    .from('service_requests')
+    .update({ status: 'cancelled' })
+    .eq('id', cancelledOnlyServiceRequest.data.id)
+    .select('id, status')
+    .single();
+
+  if (
+    cancelledOnlyServiceRequestCancel.error ||
+    cancelledOnlyServiceRequestCancel.data.status !== 'cancelled'
+  ) {
+    throw new Error(
+      `Customer could not cancel cancellable service request: ${cancelledOnlyServiceRequestCancel.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const cancelledApplicationInsert = await professionalClient
+    .from('applications')
+    .insert({
+      request_id: cancelledOnlyServiceRequest.data.id,
+      professional_id: professionalProfile.id,
+      message: 'Intento de postular a una solicitud cancelada.',
+      proposal_type: 'diagnostic_visit',
+      visit_price: 5000,
+      estimated_price: null,
+      estimated_duration_text: null,
+      availability_text: 'Esta semana',
+      status: 'submitted',
+    })
+    .select('id')
+    .single();
+
+  if (!cancelledApplicationInsert.error) {
+    throw new Error('Professional unexpectedly applied to a cancelled service request.');
   }
 
   console.log('RLS smoke test passed.');
