@@ -67,6 +67,7 @@ function RootNavigator() {
       </Stack.Protected>
       <Stack.Protected guard={customerComplete || professionalComplete}>
         <Stack.Screen name="profile" />
+        <Stack.Screen name="chat/[conversationId]" />
       </Stack.Protected>
     </Stack>
   );

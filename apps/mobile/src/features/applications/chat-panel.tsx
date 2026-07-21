@@ -37,6 +37,7 @@ export function ApplicationChatPanel({
 }: ApplicationChatPanelProps) {
   const queryClient = useQueryClient();
   const scrollRef = useRef<ScrollView | null>(null);
+  const lastMarkedKeyRef = useRef<string | null>(null);
   const [body, setBody] = useState('');
   const [error, setError] = useState<string | null>(null);
   const conversationQuery = useQuery({
@@ -58,6 +59,7 @@ export function ApplicationChatPanel({
       onUnreadCountChange?.(applicationId, unreadCount);
     },
   });
+  const markReadAsyncRef = useRef(markReadMutation.mutateAsync);
   const sendMutation = useMutation({
     mutationFn: sendConversationMessage,
     onSuccess: (message) => {
@@ -80,10 +82,31 @@ export function ApplicationChatPanel({
   }, [conversation, onConversationUpdated]);
 
   useEffect(() => {
-    if (conversation && messagesQuery.data) {
-      void markReadMutation.mutateAsync(conversation.id);
+    markReadAsyncRef.current = markReadMutation.mutateAsync;
+  }, [markReadMutation.mutateAsync]);
+
+  const lastReceivedMessage = [...(messagesQuery.data ?? [])]
+    .reverse()
+    .find((message) => message.senderUserId !== currentUserId);
+  const conversationIdForMarkRead = conversation?.id ?? null;
+  const unreadCountForMarkRead = conversation?.unreadCount ?? 0;
+  const markReadKey =
+    conversationIdForMarkRead && unreadCountForMarkRead > 0
+      ? `${conversationIdForMarkRead}:${unreadCountForMarkRead}:${lastReceivedMessage?.id ?? 'none'}`
+      : null;
+
+  useEffect(() => {
+    if (!conversationIdForMarkRead || unreadCountForMarkRead <= 0 || !markReadKey) {
+      return;
     }
-  }, [conversation, markReadMutation, messagesQuery.data]);
+
+    if (lastMarkedKeyRef.current === markReadKey) {
+      return;
+    }
+
+    lastMarkedKeyRef.current = markReadKey;
+    void markReadAsyncRef.current(conversationIdForMarkRead);
+  }, [conversationIdForMarkRead, markReadKey, unreadCountForMarkRead]);
 
   if (conversationQuery.isPending) {
     return (

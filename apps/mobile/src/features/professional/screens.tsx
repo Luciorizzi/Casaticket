@@ -29,7 +29,7 @@ import {
   getVerificationLabel,
   StatusBadge,
 } from '@/components/ui/status-badge';
-import { ApplicationChatPanel } from '@/features/applications/chat-panel';
+import { ensureApplicationConversation } from '@/features/applications/chat-api';
 import { useAuthSession } from '@/features/auth/auth-provider';
 import { listActiveCategories } from '@/features/categories/api';
 import { resolveAppRoute } from '@/features/navigation/access';
@@ -52,7 +52,7 @@ export function ProfessionalOnboardingScreen() {
   return (
     <ProfessionalProfileEditorScreen
       mode="onboarding"
-      subtitle="Completá tu perfil profesional para empezar a recibir oportunidades relevantes."
+      subtitle="CompletÃ¡ tu perfil profesional para empezar a recibir oportunidades relevantes."
       title="Tu perfil profesional"
     />
   );
@@ -79,15 +79,15 @@ export function ProfessionalHomeScreen() {
 
   if (!profile || !professionalProfile) {
     return (
-      <Screen subtitle="Todavía estamos resolviendo tu perfil profesional." title="Inicio">
-        <ErrorState message="No encontramos la información profesional todavía." />
+      <Screen subtitle="TodavÃ­a estamos resolviendo tu perfil profesional." title="Inicio">
+        <ErrorState message="No encontramos la informaciÃ³n profesional todavÃ­a." />
       </Screen>
     );
   }
 
   return (
     <Screen
-      subtitle="Desde acá vas a gestionar tu disponibilidad y ver oportunidades compatibles."
+      subtitle="Desde acÃ¡ vas a gestionar tu disponibilidad y ver oportunidades compatibles."
       title="Inicio profesional"
     >
       <Card>
@@ -96,7 +96,7 @@ export function ProfessionalHomeScreen() {
           <View style={styles.copy}>
             <Text style={styles.welcomeTitle}>Hola, {profile.firstName}</Text>
             <Text style={styles.welcomeText}>
-              Tu perfil ya quedó listo para recibir oportunidades del marketplace.
+              Tu perfil ya quedÃ³ listo para recibir oportunidades del marketplace.
             </Text>
           </View>
         </View>
@@ -112,13 +112,13 @@ export function ProfessionalHomeScreen() {
         </View>
         <Text style={styles.detailText}>Radio: {professionalProfile.serviceRadiusKm} km</Text>
         <Text style={styles.detailText}>
-          Rubros: {categoryLabels.join(', ') || 'Todavía sin rubros cargados'}
+          Rubros: {categoryLabels.join(', ') || 'TodavÃ­a sin rubros cargados'}
         </Text>
         <Button onPress={() => router.push('/(professional)/opportunities')}>Ver oportunidades</Button>
       </Card>
 
       <EmptyState
-        description="Las postulaciones ya se gestionan desde Oportunidades. La selección del profesional queda para una fase posterior."
+        description="Las postulaciones ya se gestionan desde Oportunidades. La selecciÃ³n del profesional queda para una fase posterior."
         title="Oportunidades disponibles"
       />
     </Screen>
@@ -154,11 +154,11 @@ export function ProfessionalOpportunitiesScreen() {
     [applicationsQuery.data],
   );
   const opportunities = opportunitiesQuery.data ?? [];
-  const categories = uniqueValues(opportunities.map((opportunity) => opportunity.categoryName ?? 'Sin categoría'));
+  const categories = uniqueValues(opportunities.map((opportunity) => opportunity.categoryName ?? 'Sin categorÃ­a'));
   const urgencies = uniqueValues(opportunities.map((opportunity) => opportunity.urgency));
   const cities = uniqueValues(opportunities.map((opportunity) => opportunity.city));
   const filteredOpportunities = opportunities.filter((opportunity) => {
-    const categoryName = opportunity.categoryName ?? 'Sin categoría';
+    const categoryName = opportunity.categoryName ?? 'Sin categorÃ­a';
 
     return (
       (!categoryFilter || categoryName === categoryFilter) &&
@@ -170,8 +170,8 @@ export function ProfessionalOpportunitiesScreen() {
 
   if (!professionalId) {
     return (
-      <Screen subtitle="Todavía estamos resolviendo tu perfil profesional." title="Oportunidades">
-        <ErrorState message="No encontramos tu perfil profesional todavía." />
+      <Screen subtitle="TodavÃ­a estamos resolviendo tu perfil profesional." title="Oportunidades">
+        <ErrorState message="No encontramos tu perfil profesional todavÃ­a." />
       </Screen>
     );
   }
@@ -200,7 +200,7 @@ export function ProfessionalOpportunitiesScreen() {
 
   return (
     <Screen
-      subtitle="Solicitudes publicadas compatibles con tus rubros. No mostramos dirección exacta ni datos del cliente."
+      subtitle="Solicitudes publicadas compatibles con tus rubros. No mostramos direcciÃ³n exacta ni datos del cliente."
       title="Oportunidades"
     >
       <OpportunityFilters
@@ -228,7 +228,7 @@ export function ProfessionalOpportunitiesScreen() {
       {filteredOpportunities.length === 0 ? (
         <EmptyState
           description="No hay solicitudes compatibles con los filtros actuales."
-          title="Sin oportunidades todavía"
+          title="Sin oportunidades todavÃ­a"
         />
       ) : (
         filteredOpportunities.map((opportunity) => (
@@ -248,10 +248,8 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
   const { sessionState } = useAuthSession();
   const professionalProfile =
     sessionState.status === 'authenticated' ? sessionState.professionalProfile : null;
-  const currentUserId = sessionState.status === 'authenticated' ? sessionState.user.id : null;
   const professionalId = professionalProfile?.id ?? null;
   const [error, setError] = useState<string | null>(null);
-  const [chatOpen, setChatOpen] = useState(false);
   const opportunityQuery = useQuery({
     queryKey:
       professionalId && requestId
@@ -302,11 +300,35 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
       );
     },
   });
+  const openConversationMutation = useMutation({
+    mutationFn: ensureApplicationConversation,
+    onSuccess: (conversation) => {
+      if (!professionalId) {
+        return;
+      }
+
+      queryClient.setQueryData(queryKeys.applicationConversation(conversation.applicationId), conversation);
+      updateProfessionalApplicationChatCache({
+        conversationId: conversation.id,
+        professionalId,
+        queryClient,
+        requestId,
+        unreadCount: conversation.unreadCount,
+      });
+      navigateToConversation(conversation.id);
+    },
+  });
+  const navigateToConversation = (conversationId: string) => {
+    router.push({
+      pathname: '/chat/[conversationId]',
+      params: { conversationId },
+    } as Href);
+  };
 
   if (!professionalId) {
     return (
-      <Screen subtitle="Todavía estamos resolviendo tu perfil profesional." title="Oportunidad">
-        <ErrorState message="No encontramos tu perfil profesional todavía." />
+      <Screen subtitle="TodavÃ­a estamos resolviendo tu perfil profesional." title="Oportunidad">
+        <ErrorState message="No encontramos tu perfil profesional todavÃ­a." />
       </Screen>
     );
   }
@@ -338,14 +360,14 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
     }
 
     Alert.alert(
-      'Retirar postulación',
-      'La postulación quedará visible para vos como retirada.',
+      'Retirar postulaciÃ³n',
+      'La postulaciÃ³n quedarÃ¡ visible para vos como retirada.',
       [
         { style: 'cancel', text: 'Volver' },
         {
           onPress: () => void withdrawMutation.mutateAsync(application),
           style: 'destructive',
-          text: 'Retirar postulación',
+          text: 'Retirar postulaciÃ³n',
         },
       ],
     );
@@ -357,36 +379,28 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
       {application ? (
         <>
           <ApplicationSummary application={application} />
-          <Button onPress={() => setChatOpen((current) => !current)} variant="secondary">
-            {chatOpen ? 'Ocultar conversación' : 'Abrir chat de la postulación'}
+          <Button
+            onPress={() => {
+              if (application.conversationId) {
+                navigateToConversation(application.conversationId);
+                return;
+              }
+
+              void openConversationMutation.mutateAsync(application.id).catch((openError) => {
+                logDevelopmentSupabaseError('professional-applications:open-chat', openError);
+              });
+            }}
+            variant="secondary"
+          >
+            Abrir conversacion
           </Button>
-          {chatOpen && currentUserId ? (
-            <ApplicationChatPanel
-              applicationId={application.id}
-              currentUserId={currentUserId}
-              onConversationUpdated={(conversation) => {
-                updateProfessionalApplicationChatCache({
-                  conversationId: conversation.id,
-                  professionalId,
-                  queryClient,
-                  requestId,
-                });
-              }}
-              onUnreadCountChange={(_, unreadCount) => {
-                updateProfessionalApplicationChatCache({
-                  professionalId,
-                  queryClient,
-                  requestId,
-                  unreadCount,
-                });
-              }}
-              title="Chat con el cliente"
-            />
+          {openConversationMutation.error ? (
+            <ErrorState message="No pudimos abrir la conversacion." title="Chat no disponible" />
           ) : null}
         </>
       ) : (
         <>
-          {error ? <ErrorState message={error} title="No pudimos enviar la postulación" /> : null}
+          {error ? <ErrorState message={error} title="No pudimos enviar la postulaciÃ³n" /> : null}
           <ApplicationForm
             loading={createMutation.isPending}
             onSubmit={async (values) => {
@@ -399,7 +413,7 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
                 setError(
                   getUserFacingErrorMessage(
                     submissionError,
-                    'No pudimos enviar la postulación.',
+                    'No pudimos enviar la postulaciÃ³n.',
                   ),
                 );
               }
@@ -409,11 +423,11 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
       )}
       {application && ['submitted', 'viewed'].includes(application.status) ? (
         <Button disabled={withdrawMutation.isPending} onPress={withdraw} variant="danger">
-          {withdrawMutation.isPending ? 'Retirando...' : 'Retirar postulación'}
+          {withdrawMutation.isPending ? 'Retirando...' : 'Retirar postulaciÃ³n'}
         </Button>
       ) : null}
       {withdrawMutation.error ? (
-        <ErrorState message="No pudimos retirar la postulación." title="Retiro fallido" />
+        <ErrorState message="No pudimos retirar la postulaciÃ³n." title="Retiro fallido" />
       ) : null}
     </Screen>
   );
@@ -424,9 +438,7 @@ export function ProfessionalJobsScreen() {
   const { sessionState } = useAuthSession();
   const professionalProfile =
     sessionState.status === 'authenticated' ? sessionState.professionalProfile : null;
-  const currentUserId = sessionState.status === 'authenticated' ? sessionState.user.id : null;
   const professionalId = professionalProfile?.id ?? null;
-  const [chatApplicationId, setChatApplicationId] = useState<string | null>(null);
   const selectedJobsQuery = useQuery({
     queryKey: professionalId
       ? queryKeys.professionalSelectedJobs(professionalId)
@@ -434,6 +446,30 @@ export function ProfessionalJobsScreen() {
     queryFn: () => listProfessionalSelectedJobs(professionalId ?? ''),
     enabled: Boolean(professionalId),
   });
+  const openJobConversationMutation = useMutation({
+    mutationFn: ensureApplicationConversation,
+    onSuccess: (conversation) => {
+      if (!professionalId) {
+        return;
+      }
+
+      queryClient.setQueryData(queryKeys.applicationConversation(conversation.applicationId), conversation);
+      updateProfessionalSelectedJobChatCache({
+        applicationId: conversation.applicationId,
+        conversationId: conversation.id,
+        professionalId,
+        queryClient,
+        unreadCount: conversation.unreadCount,
+      });
+      navigateToJobConversation(conversation.id);
+    },
+  });
+  const navigateToJobConversation = (conversationId: string) => {
+    router.push({
+      pathname: '/chat/[conversationId]',
+      params: { conversationId },
+    } as Href);
+  };
 
   if (!professionalId) {
     return (
@@ -465,46 +501,28 @@ export function ProfessionalJobsScreen() {
   const selectedJobs = selectedJobsQuery.data ?? [];
 
   return (
-    <Screen subtitle="Solicitudes donde el cliente ya te eligió." title="Mis trabajos">
+    <Screen subtitle="Solicitudes donde el cliente ya te eligiÃ³." title="Mis trabajos">
+      {openJobConversationMutation.error ? (
+        <ErrorState message="No pudimos abrir la conversacion." title="Chat no disponible" />
+      ) : null}
       {selectedJobs.length === 0 ? (
         <EmptyState
-          description="Cuando un cliente seleccione tu postulación, la vas a ver en esta sección."
-          title="Todavía no hay trabajos"
+          description="Cuando un cliente seleccione tu postulaciÃ³n, la vas a ver en esta secciÃ³n."
+          title="TodavÃ­a no hay trabajos"
         />
       ) : (
         selectedJobs.map((job) => (
           <ProfessionalSelectedJobCard
-            chatOpen={chatApplicationId === job.applicationId}
-            currentUserId={currentUserId}
             job={job}
             key={job.applicationId}
-            onConversationUpdated={(conversationId) => {
-              if (!professionalId) {
+            onOpenChat={() => {
+              if (job.conversationId) {
+                navigateToJobConversation(job.conversationId);
                 return;
               }
 
-              updateProfessionalSelectedJobChatCache({
-                applicationId: job.applicationId,
-                conversationId,
-                professionalId,
-                queryClient,
-              });
-            }}
-            onOpenChat={() =>
-              setChatApplicationId((currentId) =>
-                currentId === job.applicationId ? null : job.applicationId,
-              )
-            }
-            onUnreadCountChange={(unreadCount) => {
-              if (!professionalId) {
-                return;
-              }
-
-              updateProfessionalSelectedJobChatCache({
-                applicationId: job.applicationId,
-                professionalId,
-                queryClient,
-                unreadCount,
+              void openJobConversationMutation.mutateAsync(job.applicationId).catch((openError) => {
+                logDevelopmentSupabaseError('professional-jobs:open-chat', openError);
               });
             }}
           />
@@ -518,7 +536,7 @@ export function ProfessionalProfileScreen() {
   return (
     <ProfessionalProfileEditorScreen
       mode="edit"
-      subtitle="Editá tu perfil profesional, tus rubros y tu disponibilidad."
+      subtitle="EditÃ¡ tu perfil profesional, tus rubros y tu disponibilidad."
       title="Perfil"
     />
   );
@@ -602,14 +620,14 @@ function ProfessionalProfileEditorScreen({
 
   const signOutFooter = (
     <Button onPress={() => void signOut()} variant={mode === 'onboarding' ? 'secondary' : 'danger'}>
-      Cerrar sesión
+      Cerrar sesiÃ³n
     </Button>
   );
 
   if (!profile) {
     return (
-      <Screen footer={signOutFooter} subtitle="Todavía estamos resolviendo tu sesión." title={title}>
-        <ErrorState message="No encontramos tu perfil todavía." />
+      <Screen footer={signOutFooter} subtitle="TodavÃ­a estamos resolviendo tu sesiÃ³n." title={title}>
+        <ErrorState message="No encontramos tu perfil todavÃ­a." />
       </Screen>
     );
   }
@@ -619,7 +637,7 @@ function ProfessionalProfileEditorScreen({
       {profile.role === 'professional' && mode === 'edit' ? (
         <Card>
           <Text style={styles.infoText}>
-            Si en el futuro necesitás cambiar el tipo de cuenta, contactá a soporte para revisarlo
+            Si en el futuro necesitÃ¡s cambiar el tipo de cuenta, contactÃ¡ a soporte para revisarlo
             junto con el equipo operativo.
           </Text>
         </Card>
@@ -676,10 +694,10 @@ function OpportunityFilters({
 }) {
   return (
     <Card>
-      <Text style={styles.filterTitle}>Filtros rápidos</Text>
+      <Text style={styles.filterTitle}>Filtros rÃ¡pidos</Text>
       <FilterPills
         currentValue={categoryFilter}
-        label="Categoría"
+        label="CategorÃ­a"
         onChange={onCategoryChange}
         values={categories}
       />
@@ -696,7 +714,7 @@ function OpportunityFilters({
         style={[styles.choice, onlyWithoutApplication ? styles.choiceSelected : null]}
       >
         <Text style={[styles.choiceLabel, onlyWithoutApplication ? styles.choiceLabelSelected : null]}>
-          Solo sin mi postulación
+          Solo sin mi postulaciÃ³n
         </Text>
       </Pressable>
     </Card>
@@ -761,17 +779,17 @@ function OpportunityListItem({
         <View style={styles.requestCard}>
           <Text style={styles.requestTitle}>{opportunity.title}</Text>
           <Text style={styles.requestMeta}>
-            {opportunity.categoryName ?? 'No estoy seguro del rubro'} · {opportunity.city}
+            {opportunity.categoryName ?? 'No estoy seguro del rubro'} Â· {opportunity.city}
           </Text>
           <Text style={styles.requestMeta}>
-            {getServiceRequestUrgencyLabel(opportunity.urgency)} · {getServiceRequestTypeLabel(opportunity.requestType)}
+            {getServiceRequestUrgencyLabel(opportunity.urgency)} Â· {getServiceRequestTypeLabel(opportunity.requestType)}
           </Text>
           <Text style={styles.requestMeta}>Publicada: {formatDateTime(opportunity.publishedAt)}</Text>
           {opportunity.preferredDate ? (
             <Text style={styles.requestMeta}>Fecha preferida: {opportunity.preferredDate}</Text>
           ) : null}
           {application ? (
-            <StatusBadge tone="accent" value={`Postulación ${getApplicationStatusLabel(application.status)}`} />
+            <StatusBadge tone="accent" value={`PostulaciÃ³n ${getApplicationStatusLabel(application.status)}`} />
           ) : null}
         </View>
       </Card>
@@ -786,10 +804,10 @@ function OpportunityDetailCard({ opportunity }: { opportunity: ProfessionalOppor
         <Text style={styles.requestTitle}>{opportunity.title}</Text>
         <Text style={styles.requestDescription}>{opportunity.description}</Text>
         <Text style={styles.requestMeta}>
-          Categoría: {opportunity.categoryName ?? 'No estoy seguro del rubro'}
+          CategorÃ­a: {opportunity.categoryName ?? 'No estoy seguro del rubro'}
         </Text>
         <Text style={styles.requestMeta}>
-          Ubicación: {opportunity.city}, {opportunity.province}
+          UbicaciÃ³n: {opportunity.city}, {opportunity.province}
         </Text>
         <Text style={styles.requestMeta}>Tipo: {getServiceRequestTypeLabel(opportunity.requestType)}</Text>
         <Text style={styles.requestMeta}>Urgencia: {getServiceRequestUrgencyLabel(opportunity.urgency)}</Text>
@@ -797,7 +815,7 @@ function OpportunityDetailCard({ opportunity }: { opportunity: ProfessionalOppor
           Fecha preferida: {opportunity.preferredDate ?? 'Sin fecha preferida'}
         </Text>
         <Text style={styles.requestMeta}>
-          Horario: {opportunity.preferredTimeText ?? 'Sin horario específico'}
+          Horario: {opportunity.preferredTimeText ?? 'Sin horario especÃ­fico'}
         </Text>
         <Text style={styles.requestMeta}>
           Disponibilidad: {opportunity.availabilityNotes ?? 'Sin notas adicionales'}
@@ -812,7 +830,7 @@ function ApplicationSummary({ application }: { application: ProfessionalApplicat
   return (
     <Card>
       <View style={styles.requestCard}>
-        <Text style={styles.requestTitle}>Tu postulación</Text>
+        <Text style={styles.requestTitle}>Tu postulaciÃ³n</Text>
         {application.unreadCount > 0 ? (
           <Text style={styles.unreadText}>{application.unreadCount} mensajes sin leer</Text>
         ) : null}
@@ -829,27 +847,47 @@ function ApplicationSummary({ application }: { application: ProfessionalApplicat
           Estimado: {formatPrice(application.estimatedPrice) ?? 'Sin precio estimado'}
         </Text>
         <Text style={styles.requestMeta}>
-          Duración: {application.estimatedDurationText ?? 'Sin duración estimada'}
+          DuraciÃ³n: {application.estimatedDurationText ?? 'Sin duraciÃ³n estimada'}
         </Text>
+        <ConversationSummary
+          lastMessageAt={application.lastMessageAt}
+          lastMessageBody={application.lastMessageBody}
+          unreadCount={application.unreadCount}
+        />
       </View>
     </Card>
   );
 }
 
-function ProfessionalSelectedJobCard({
-  chatOpen,
-  currentUserId,
-  job,
-  onConversationUpdated,
-  onOpenChat,
-  onUnreadCountChange,
+function ConversationSummary({
+  lastMessageAt,
+  lastMessageBody,
+  unreadCount,
 }: {
-  chatOpen: boolean;
-  currentUserId: string | null;
+  lastMessageAt: string | null;
+  lastMessageBody: string | null;
+  unreadCount: number;
+}) {
+  return (
+    <View style={styles.conversationSummary}>
+      <View style={styles.copy}>
+        <Text style={styles.requestTitle}>Conversacion</Text>
+        <Text numberOfLines={2} style={styles.requestMeta}>
+          {lastMessageBody ? `Ultimo mensaje: ${lastMessageBody}` : 'Todavia no hay mensajes.'}
+        </Text>
+        {lastMessageAt ? <Text style={styles.requestMeta}>{formatDateTime(lastMessageAt)}</Text> : null}
+      </View>
+      {unreadCount > 0 ? <Text style={styles.unreadBadge}>{unreadCount}</Text> : null}
+    </View>
+  );
+}
+
+function ProfessionalSelectedJobCard({
+  job,
+  onOpenChat,
+}: {
   job: ProfessionalSelectedJob;
-  onConversationUpdated: (conversationId: string) => void;
   onOpenChat: () => void;
-  onUnreadCountChange: (unreadCount: number) => void;
 }) {
   return (
     <Card>
@@ -863,18 +901,14 @@ function ProfessionalSelectedJobCard({
         </Text>
         <StatusBadge tone="success" value="Profesional seleccionado" />
         <Text style={styles.requestMeta}>Fecha de seleccion: {formatDateTime(job.selectedAt)}</Text>
+        <ConversationSummary
+          lastMessageAt={job.lastMessageAt}
+          lastMessageBody={job.lastMessageBody}
+          unreadCount={job.unreadCount}
+        />
         <Button onPress={onOpenChat} variant="secondary">
-          {chatOpen ? 'Ocultar conversación' : 'Abrir chat'}
+          Abrir conversacion
         </Button>
-        {chatOpen && currentUserId ? (
-          <ApplicationChatPanel
-            applicationId={job.applicationId}
-            currentUserId={currentUserId}
-            onConversationUpdated={(conversation) => onConversationUpdated(conversation.id)}
-            onUnreadCountChange={(_, unreadCount) => onUnreadCountChange(unreadCount)}
-            title="Chat con el cliente"
-          />
-        ) : null}
       </View>
     </Card>
   );
@@ -1065,6 +1099,26 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     color: '#1d1811',
+  },
+  conversationSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 14,
+    backgroundColor: '#f3eadc',
+    padding: 12,
+  },
+  unreadBadge: {
+    minWidth: 28,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: '#bb5e3c',
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    textAlign: 'center',
   },
   unreadText: {
     alignSelf: 'flex-start',

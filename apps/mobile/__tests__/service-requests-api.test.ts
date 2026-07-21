@@ -190,6 +190,8 @@ describe('service request api', () => {
           created_at: '2026-07-20T12:00:00.000Z',
           conversation_id: 'conversation-1',
           unread_count: 2,
+          last_message_body: 'Hola',
+          last_message_at: '2026-07-20T13:00:00.000Z',
           professional_first_name: 'Pro',
           professional_last_name: 'Demo',
           professional_bio: 'Bio publica',
@@ -213,6 +215,7 @@ describe('service request api', () => {
       id: 'application-1',
       professionalId: 'professional-1',
       professionalFirstName: 'Pro',
+      lastMessageBody: 'Hola',
       unreadCount: 2,
       visitPrice: 5000,
     });

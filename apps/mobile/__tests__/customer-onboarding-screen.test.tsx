@@ -50,8 +50,8 @@ jest.mock('@/features/auth/auth-provider', () => ({
   }),
 }));
 
-jest.mock('@/features/applications/chat-panel', () => ({
-  ApplicationChatPanel: () => null,
+jest.mock('@/features/applications/chat-api', () => ({
+  ensureApplicationConversation: jest.fn(),
 }));
 
 jest.mock('@/features/profile/api', () => ({

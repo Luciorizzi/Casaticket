@@ -57,6 +57,8 @@ interface CustomerRequestApplicationRow {
   created_at: string;
   conversation_id: string | null;
   unread_count: number | null;
+  last_message_body: string | null;
+  last_message_at: string | null;
   professional_first_name: string;
   professional_last_name: string;
   professional_bio: string | null;
@@ -158,6 +160,8 @@ function mapCustomerRequestApplication(
     createdAt: row.created_at,
     conversationId: row.conversation_id,
     unreadCount: row.unread_count ?? 0,
+    lastMessageBody: row.last_message_body,
+    lastMessageAt: row.last_message_at,
     professionalFirstName: row.professional_first_name,
     professionalLastName: row.professional_last_name,
     professionalBio: row.professional_bio,

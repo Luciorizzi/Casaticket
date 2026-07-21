@@ -25,7 +25,7 @@ import { ErrorState } from '@/components/ui/error-state';
 import { LoadingState } from '@/components/ui/loading-state';
 import { Screen } from '@/components/ui/screen';
 import { getVerificationLabel, StatusBadge } from '@/components/ui/status-badge';
-import { ApplicationChatPanel } from '@/features/applications/chat-panel';
+import { ensureApplicationConversation } from '@/features/applications/chat-api';
 import { useAuthSession } from '@/features/auth/auth-provider';
 import { listActiveCategories } from '@/features/categories/api';
 import { CustomerProfileForm } from '@/features/customer/customer-profile-form';
@@ -233,7 +233,6 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
   const queryClient = useQueryClient();
   const { sessionState } = useAuthSession();
   const [expandedApplicationId, setExpandedApplicationId] = useState<string | null>(null);
-  const [chatApplicationId, setChatApplicationId] = useState<string | null>(null);
   const requestQuery = useQuery({
     queryKey:
       sessionState.status === 'authenticated'
@@ -321,6 +320,30 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
       }
     },
   });
+  const openConversationMutation = useMutation({
+    mutationFn: ensureApplicationConversation,
+    onSuccess: (conversation, applicationId) => {
+      if (sessionState.status !== 'authenticated') {
+        return;
+      }
+
+      queryClient.setQueryData(queryKeys.applicationConversation(applicationId), conversation);
+      updateCustomerApplicationChatCache({
+        applicationId,
+        patch: { conversationId: conversation.id, unreadCount: conversation.unreadCount },
+        queryClient,
+        requestId,
+        userId: sessionState.user.id,
+      });
+      navigateToConversation(conversation.id);
+    },
+  });
+  const navigateToConversation = (conversationId: string) => {
+    router.push({
+      pathname: '/chat/[conversationId]',
+      params: { conversationId },
+    } as Href);
+  };
 
   if (requestQuery.isPending || applicationsQuery.isPending) {
     return (
@@ -391,10 +414,11 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
       {selectMutation.error ? (
         <ErrorState message="No pudimos seleccionar este profesional." title="Selección fallida" />
       ) : null}
+      {openConversationMutation.error ? (
+        <ErrorState message="No pudimos abrir la conversacion." title="Chat no disponible" />
+      ) : null}
       <CustomerApplicationsSection
         applications={applications}
-        chatApplicationId={chatApplicationId}
-        currentUserId={sessionState.user.id}
         expandedApplicationId={expandedApplicationId}
         loadingApplicationId={selectMutation.variables?.id ?? null}
         markingViewed={markViewedMutation.isPending}
@@ -411,26 +435,14 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
         }}
         onOpenChat={(application) => {
           setExpandedApplicationId(application.id);
-          setChatApplicationId((currentId) =>
-            currentId === application.id ? null : application.id,
-          );
-        }}
-        onUnreadCountChange={(applicationId, unreadCount) => {
-          updateCustomerApplicationChatCache({
-            applicationId,
-            patch: { unreadCount },
-            queryClient,
-            requestId,
-            userId: sessionState.user.id,
-          });
-        }}
-        onConversationUpdated={(applicationId, conversationId) => {
-          updateCustomerApplicationChatCache({
-            applicationId,
-            patch: { conversationId },
-            queryClient,
-            requestId,
-            userId: sessionState.user.id,
+
+          if (application.conversationId) {
+            navigateToConversation(application.conversationId);
+            return;
+          }
+
+          void openConversationMutation.mutateAsync(application.id).catch((error) => {
+            logDevelopmentSupabaseError('customer-applications:open-chat', error);
           });
         }}
         onSelectApplication={(application) => {
@@ -621,30 +633,22 @@ function ServiceRequestDetailCard({ request }: { request: ServiceRequestWithCate
 
 function CustomerApplicationsSection({
   applications,
-  chatApplicationId,
-  currentUserId,
   expandedApplicationId,
   loadingApplicationId,
   markingViewed,
-  onConversationUpdated,
   onOpenApplication,
   onOpenChat,
   onSelectApplication,
-  onUnreadCountChange,
   request,
   selecting,
 }: {
   applications: CustomerRequestApplication[];
-  chatApplicationId: string | null;
-  currentUserId: string;
   expandedApplicationId: string | null;
   loadingApplicationId: string | null;
   markingViewed: boolean;
-  onConversationUpdated: (applicationId: string, conversationId: string) => void;
   onOpenApplication: (application: CustomerRequestApplication) => void;
   onOpenChat: (application: CustomerRequestApplication) => void;
   onSelectApplication: (application: CustomerRequestApplication) => void;
-  onUnreadCountChange: (applicationId: string, unreadCount: number) => void;
   request: ServiceRequestWithCategory;
   selecting: boolean;
 }) {
@@ -674,21 +678,13 @@ function CustomerApplicationsSection({
           applications.map((application) => (
             <CustomerApplicationCard
               application={application}
-              chatOpen={chatApplicationId === application.id}
-              currentUserId={currentUserId}
               expanded={expandedApplicationId === application.id}
               key={application.id}
               loading={selecting && loadingApplicationId === application.id}
               markingViewed={markingViewed && expandedApplicationId === application.id}
-              onConversationUpdated={(conversationId) =>
-                onConversationUpdated(application.id, conversationId)
-              }
               onOpen={() => onOpenApplication(application)}
               onOpenChat={() => onOpenChat(application)}
               onSelect={() => onSelectApplication(application)}
-              onUnreadCountChange={(unreadCount) =>
-                onUnreadCountChange(application.id, unreadCount)
-              }
               request={request}
               selecting={selecting}
             />
@@ -701,30 +697,22 @@ function CustomerApplicationsSection({
 
 function CustomerApplicationCard({
   application,
-  chatOpen,
-  currentUserId,
   expanded,
   loading,
   markingViewed,
-  onConversationUpdated,
   onOpen,
   onOpenChat,
   onSelect,
-  onUnreadCountChange,
   request,
   selecting,
 }: {
   application: CustomerRequestApplication;
-  chatOpen: boolean;
-  currentUserId: string;
   expanded: boolean;
   loading: boolean;
   markingViewed: boolean;
-  onConversationUpdated: (conversationId: string) => void;
   onOpen: () => void;
   onOpenChat: () => void;
   onSelect: () => void;
-  onUnreadCountChange: (unreadCount: number) => void;
   request: ServiceRequestWithCategory;
   selecting: boolean;
 }) {
@@ -774,9 +762,14 @@ function CustomerApplicationCard({
           <Text style={styles.requestDescription}>
             {application.professionalBio ?? 'Este profesional todavia no cargo una bio.'}
           </Text>
+          <ConversationSummary
+            lastMessageAt={application.lastMessageAt}
+            lastMessageBody={application.lastMessageBody}
+            unreadCount={application.unreadCount}
+          />
           {markingViewed ? <Text style={styles.requestMeta}>Marcando como vista...</Text> : null}
           <Button onPress={onOpenChat} variant="secondary">
-            {chatOpen ? 'Ocultar conversación' : 'Consultar al profesional'}
+            Abrir conversacion
           </Button>
           {canSelect ? (
             <Button disabled={selecting} onPress={onSelect}>
@@ -789,15 +782,29 @@ function CustomerApplicationCard({
           Ver perfil y propuesta
         </Button>
       )}
-      {chatOpen ? (
-        <ApplicationChatPanel
-          applicationId={application.id}
-          currentUserId={currentUserId}
-          onConversationUpdated={(conversation) => onConversationUpdated(conversation.id)}
-          onUnreadCountChange={(_, unreadCount) => onUnreadCountChange(unreadCount)}
-          title={`Chat con ${getProfessionalDisplayName(application)}`}
-        />
-      ) : null}
+    </View>
+  );
+}
+
+function ConversationSummary({
+  lastMessageAt,
+  lastMessageBody,
+  unreadCount,
+}: {
+  lastMessageAt: string | null;
+  lastMessageBody: string | null;
+  unreadCount: number;
+}) {
+  return (
+    <View style={styles.conversationSummary}>
+      <View style={styles.copy}>
+        <Text style={styles.requestTitle}>Conversacion</Text>
+        <Text numberOfLines={2} style={styles.requestMeta}>
+          {lastMessageBody ? `Ultimo mensaje: ${lastMessageBody}` : 'Todavia no hay mensajes.'}
+        </Text>
+        {lastMessageAt ? <Text style={styles.requestMeta}>{formatDateTime(lastMessageAt)}</Text> : null}
+      </View>
+      {unreadCount > 0 ? <Text style={styles.unreadBadge}>{unreadCount}</Text> : null}
     </View>
   );
 }
@@ -990,6 +997,26 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     backgroundColor: '#fff8ef',
     padding: 12,
+  },
+  conversationSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 14,
+    backgroundColor: '#f3eadc',
+    padding: 12,
+  },
+  unreadBadge: {
+    minWidth: 28,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: '#bb5e3c',
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    textAlign: 'center',
   },
   unreadText: {
     alignSelf: 'flex-start',

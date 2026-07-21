@@ -19,6 +19,7 @@ const mockListOwnApplications = jest.fn();
 const mockListProfessionalOpportunities = jest.fn();
 const mockListProfessionalSelectedJobs = jest.fn();
 const mockWithdrawApplication = jest.fn();
+const mockEnsureApplicationConversation = jest.fn();
 
 jest.mock('expo-router', () => ({
   router: {
@@ -68,8 +69,8 @@ jest.mock('@/features/auth/auth-provider', () => ({
   }),
 }));
 
-jest.mock('@/features/applications/chat-panel', () => ({
-  ApplicationChatPanel: () => null,
+jest.mock('@/features/applications/chat-api', () => ({
+  ensureApplicationConversation: (...args: unknown[]) => mockEnsureApplicationConversation(...args),
 }));
 
 jest.mock('@/features/professional/application-form', () => {
@@ -173,6 +174,8 @@ function createApplication(overrides: Partial<ProfessionalApplication> = {}): Pr
     status: 'submitted',
     conversationId: 'conversation-1',
     unreadCount: 0,
+    lastMessageBody: null,
+    lastMessageAt: null,
     createdAt: '2026-07-20T12:00:00.000Z',
     updatedAt: '2026-07-20T12:00:00.000Z',
     withdrawnAt: null,
@@ -191,6 +194,8 @@ function createSelectedJob(overrides: Partial<ProfessionalSelectedJob> = {}): Pr
     selectedAt: '2026-07-20T13:00:00.000Z',
     conversationId: 'conversation-1',
     unreadCount: 0,
+    lastMessageBody: null,
+    lastMessageAt: null,
     ...overrides,
   };
 }
@@ -231,6 +236,25 @@ describe('professional opportunities screens', () => {
     mockListProfessionalSelectedJobs.mockResolvedValue([]);
     mockGetProfessionalOpportunity.mockResolvedValue(createOpportunity());
     mockGetOwnApplication.mockResolvedValue(null);
+    mockEnsureApplicationConversation.mockResolvedValue({
+      id: 'conversation-1',
+      applicationId: 'application-1',
+      requestId: 'request-1',
+      requestTitle: 'Arreglo de perdida',
+      customerId: 'customer-1',
+      professionalId: 'professional-1',
+      status: 'active',
+      applicationStatus: 'submitted',
+      requestStatus: 'published',
+      counterpartUserId: 'customer-1',
+      counterpartName: 'Ana Cliente',
+      lastMessageBody: null,
+      lastMessageAt: null,
+      createdAt: '2026-07-20T12:00:00.000Z',
+      updatedAt: '2026-07-20T12:00:00.000Z',
+      unreadCount: 0,
+      canSend: true,
+    });
   });
 
   afterEach(() => {
@@ -294,10 +318,10 @@ describe('professional opportunities screens', () => {
     queryClient.setQueryData(queryKeys.professionalApplications('professional-1'), [application]);
 
     await waitFor(() => {
-      expect(screen.getByText('Retirar postulación')).toBeTruthy();
+      expect(screen.getByText(/Retirar postulaci/)).toBeTruthy();
     });
 
-    fireEvent.press(screen.getByText('Retirar postulación'));
+    fireEvent.press(screen.getByText(/Retirar postulaci/));
 
     await waitFor(() => {
       expect(mockWithdrawApplication).toHaveBeenCalledWith('application-1', 'professional-1');
@@ -311,6 +335,35 @@ describe('professional opportunities screens', () => {
     ]);
   });
 
+  it('opens the dedicated chat from an existing application', async () => {
+    const application = createApplication({ unreadCount: 1, lastMessageBody: 'Necesito coordinar.' });
+    mockGetOwnApplication.mockResolvedValue(application);
+    const queryClient = renderWithQueryClient(
+      <ProfessionalOpportunityDetailScreen requestId="request-1" />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Abrir conversacion')).toBeTruthy();
+    });
+
+    fireEvent.press(screen.getByText('Abrir conversacion'));
+
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: '/chat/[conversationId]',
+      params: { conversationId: 'conversation-1' },
+    });
+    expect(screen.getByText('Abrir conversacion')).toBeTruthy();
+
+    fireEvent.press(screen.getByText('Abrir conversacion'));
+
+    expect(mockPush).toHaveBeenCalledTimes(2);
+    expect(mockEnsureApplicationConversation).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(queryKeys.professionalApplication('professional-1', 'request-1'))).toMatchObject({
+      conversationId: 'conversation-1',
+      unreadCount: 1,
+    });
+  });
+
   it('shows selected jobs in professional jobs', async () => {
     mockListProfessionalSelectedJobs.mockResolvedValue([createSelectedJob()]);
 
@@ -322,5 +375,32 @@ describe('professional opportunities screens', () => {
 
     expect(mockListProfessionalSelectedJobs).toHaveBeenCalledWith('professional-1');
     expect(screen.getByText('Profesional seleccionado')).toBeTruthy();
+  });
+
+  it('opens the dedicated chat from selected jobs', async () => {
+    mockListProfessionalSelectedJobs.mockResolvedValue([
+      createSelectedJob({ unreadCount: 3, lastMessageBody: 'Te elegi para el trabajo.' }),
+    ]);
+    const queryClient = renderWithQueryClient(<ProfessionalJobsScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Abrir conversacion')).toBeTruthy();
+    });
+
+    fireEvent.press(screen.getByText('Abrir conversacion'));
+
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: '/chat/[conversationId]',
+      params: { conversationId: 'conversation-1' },
+    });
+    expect(screen.getByText('Abrir conversacion')).toBeTruthy();
+
+    fireEvent.press(screen.getByText('Abrir conversacion'));
+
+    expect(mockPush).toHaveBeenCalledTimes(2);
+    expect(mockEnsureApplicationConversation).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(queryKeys.professionalSelectedJobs('professional-1'))).toEqual([
+      expect.objectContaining({ conversationId: 'conversation-1', unreadCount: 3 }),
+    ]);
   });
 });

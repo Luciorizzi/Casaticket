@@ -17,5 +17,8 @@ export const queryKeys = {
     ['professional-application', professionalId, requestId] as const,
   professionalSelectedJobs: (professionalId: string) => ['professional-selected-jobs', professionalId] as const,
   applicationConversation: (applicationId: string) => ['application-conversation', applicationId] as const,
+  conversation: (conversationId: string) => ['conversation', conversationId] as const,
   conversationMessages: (conversationId: string) => ['conversation-messages', conversationId] as const,
+  conversationUnreadCount: (conversationId: string) =>
+    ['conversation-unread-count', conversationId] as const,
 };

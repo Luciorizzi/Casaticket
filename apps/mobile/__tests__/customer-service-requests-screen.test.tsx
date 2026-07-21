@@ -21,6 +21,7 @@ const mockListOwnServiceRequests = jest.fn();
 const mockMarkCustomerApplicationViewed = jest.fn();
 const mockSelectProfessionalForRequest = jest.fn();
 const mockListActiveCategories = jest.fn();
+const mockEnsureApplicationConversation = jest.fn();
 
 jest.mock('expo-router', () => ({
   router: {
@@ -57,8 +58,8 @@ jest.mock('@/features/auth/auth-provider', () => ({
   }),
 }));
 
-jest.mock('@/features/applications/chat-panel', () => ({
-  ApplicationChatPanel: () => null,
+jest.mock('@/features/applications/chat-api', () => ({
+  ensureApplicationConversation: (...args: unknown[]) => mockEnsureApplicationConversation(...args),
 }));
 
 jest.mock('@/features/customer/service-request-form', () => {
@@ -182,6 +183,8 @@ function createCustomerApplication(
     createdAt: '2026-07-20T12:00:00.000Z',
     conversationId: 'conversation-1',
     unreadCount: 0,
+    lastMessageBody: null,
+    lastMessageAt: null,
     professionalFirstName: 'Pro',
     professionalLastName: 'Demo',
     professionalBio: 'Bio pública.',
@@ -230,6 +233,25 @@ describe('customer service request screens', () => {
     mockMarkCustomerApplicationViewed.mockResolvedValue({
       application_id: 'application-1',
       status: 'viewed',
+    });
+    mockEnsureApplicationConversation.mockResolvedValue({
+      id: 'conversation-1',
+      applicationId: 'application-1',
+      requestId: 'request-1',
+      requestTitle: 'Arreglo de perdida',
+      customerId: 'user-1',
+      professionalId: 'professional-1',
+      status: 'active',
+      applicationStatus: 'viewed',
+      requestStatus: 'published',
+      counterpartUserId: 'pro-user-1',
+      counterpartName: 'Pro Demo',
+      lastMessageBody: null,
+      lastMessageAt: null,
+      createdAt: '2026-07-20T12:00:00.000Z',
+      updatedAt: '2026-07-20T12:00:00.000Z',
+      unreadCount: 0,
+      canSend: true,
     });
   });
 
@@ -303,6 +325,37 @@ describe('customer service request screens', () => {
       expect(mockMarkCustomerApplicationViewed.mock.calls[0]?.[0]).toBe('application-1');
     });
     expect(screen.getByText('Perfil publico')).toBeTruthy();
+  });
+
+  it('opens a dedicated chat route from an application summary', async () => {
+    mockGetOwnServiceRequest.mockResolvedValue(createRequest());
+    mockListCustomerRequestApplications.mockResolvedValue([
+      createCustomerApplication({
+        lastMessageBody: 'Hola, puedo ayudarte.',
+        lastMessageAt: '2026-07-20T13:00:00.000Z',
+        unreadCount: 2,
+      }),
+    ]);
+    const queryClient = renderWithQueryClient(<CustomerRequestDetailScreen requestId="request-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Ver perfil y propuesta')).toBeTruthy();
+    });
+
+    fireEvent.press(screen.getByText('Ver perfil y propuesta'));
+    fireEvent.press(screen.getByText('Abrir conversacion'));
+
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: '/chat/[conversationId]',
+      params: { conversationId: 'conversation-1' },
+    });
+    expect(screen.getByText('Abrir conversacion')).toBeTruthy();
+
+    fireEvent.press(screen.getByText('Abrir conversacion'));
+
+    expect(mockPush).toHaveBeenCalledTimes(2);
+    expect(mockEnsureApplicationConversation).not.toHaveBeenCalled();
+    expect(queryClient.getQueryData(queryKeys.applicationConversation('application-1'))).toBeUndefined();
   });
 
   it('updates request and applications cache after selecting a professional', async () => {

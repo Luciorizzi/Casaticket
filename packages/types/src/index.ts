@@ -148,6 +148,8 @@ export interface ProfessionalApplication {
   status: ApplicationStatus;
   conversationId: string | null;
   unreadCount: number;
+  lastMessageBody: string | null;
+  lastMessageAt: string | null;
   createdAt: string;
   updatedAt: string;
   withdrawnAt: string | null;
@@ -167,6 +169,8 @@ export interface CustomerRequestApplication {
   createdAt: string;
   conversationId: string | null;
   unreadCount: number;
+  lastMessageBody: string | null;
+  lastMessageAt: string | null;
   professionalFirstName: string;
   professionalLastName: string;
   professionalBio: string | null;
@@ -195,15 +199,24 @@ export interface ProfessionalSelectedJob {
   selectedAt: string | null;
   conversationId: string | null;
   unreadCount: number;
+  lastMessageBody: string | null;
+  lastMessageAt: string | null;
 }
 
 export interface ApplicationConversation {
   id: string;
   applicationId: string;
   requestId: string;
+  requestTitle: string | null;
   customerId: string;
   professionalId: string;
   status: ConversationStatus;
+  applicationStatus: ApplicationStatus | null;
+  requestStatus: ServiceRequestStatus | null;
+  counterpartUserId: string | null;
+  counterpartName: string | null;
+  lastMessageBody: string | null;
+  lastMessageAt: string | null;
   createdAt: string;
   updatedAt: string;
   unreadCount: number;

@@ -64,6 +64,8 @@ function createApplicationRow(overrides: Record<string, unknown> = {}) {
     status: 'submitted',
     conversation_id: 'conversation-1',
     unread_count: 0,
+    last_message_body: null,
+    last_message_at: null,
     created_at: '2026-07-20T12:00:00.000Z',
     updated_at: '2026-07-20T12:00:00.000Z',
     withdrawn_at: null,
@@ -174,6 +176,8 @@ describe('professional opportunities api', () => {
           selected_at: '2026-07-20T13:00:00.000Z',
           conversation_id: 'conversation-1',
           unread_count: 1,
+          last_message_body: 'Hola',
+          last_message_at: '2026-07-20T13:05:00.000Z',
         },
       ],
       error: null,
@@ -187,6 +191,7 @@ describe('professional opportunities api', () => {
       requestId: 'request-1',
       requestStatus: 'professional_selected',
       selectedAt: '2026-07-20T13:00:00.000Z',
+      lastMessageBody: 'Hola',
       unreadCount: 1,
     });
   });

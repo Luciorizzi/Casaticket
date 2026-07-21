@@ -8,7 +8,9 @@ jest.mock('@/lib/supabase', () => ({
 
 import {
   ensureApplicationConversation,
+  getConversation,
   listConversationMessages,
+  markConversationRead,
   sendConversationMessage,
 } from '@/features/applications/chat-api';
 
@@ -18,6 +20,45 @@ describe('application chat api', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  it('gets a conversation by id for the dedicated chat route', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: [
+        {
+          conversation_id: 'conversation-1',
+          application_id: 'application-1',
+          request_id: 'request-1',
+          request_title: 'Arreglo de perdida',
+          customer_id: 'customer-1',
+          professional_id: 'professional-1',
+          status: 'active',
+          application_status: 'selected',
+          request_status: 'professional_selected',
+          counterpart_user_id: 'professional-user-1',
+          counterpart_name: 'Pro Demo',
+          last_message_body: 'Hola',
+          last_message_at: '2026-07-20T12:00:00.000Z',
+          created_at: '2026-07-20T12:00:00.000Z',
+          updated_at: '2026-07-20T12:00:00.000Z',
+          unread_count: 1,
+          can_send: true,
+        },
+      ],
+      error: null,
+    });
+
+    const conversation = await getConversation('conversation-1');
+
+    expect(mockRpc).toHaveBeenCalledWith('get_conversation', {
+      p_conversation_id: 'conversation-1',
+    });
+    expect(conversation).toMatchObject({
+      id: 'conversation-1',
+      applicationStatus: 'selected',
+      counterpartName: 'Pro Demo',
+      lastMessageBody: 'Hola',
+    });
   });
 
   afterEach(() => {
@@ -118,5 +159,18 @@ describe('application chat api', () => {
     ).rejects.toThrow();
 
     expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('marks a conversation as read through the RPC', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: [{ conversation_id: 'conversation-1', unread_count: 0 }],
+      error: null,
+    });
+
+    await expect(markConversationRead('conversation-1')).resolves.toBe(0);
+
+    expect(mockRpc).toHaveBeenCalledWith('mark_conversation_read', {
+      p_conversation_id: 'conversation-1',
+    });
   });
 });

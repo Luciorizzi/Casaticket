@@ -750,6 +750,16 @@ async function main() {
     );
   }
 
+  const professionalMarkRead = await professionalClient.rpc('mark_conversation_read', {
+    p_conversation_id: selectedConversationRead.data.id,
+  });
+
+  if (professionalMarkRead.error || professionalMarkRead.data?.[0]?.unread_count !== 0) {
+    throw new Error(
+      `Professional could not mark conversation read: ${professionalMarkRead.error?.message ?? 'unexpected count'}`,
+    );
+  }
+
   const professionalReply = await professionalClient.rpc('send_conversation_message', {
     p_conversation_id: selectedConversationRead.data.id,
     p_body: 'Puedo pasar el miercoles por la tarde.',
@@ -771,6 +781,26 @@ async function main() {
   ) {
     throw new Error(
       `Customer unread count was not updated: ${customerUnreadConversation.error?.message ?? 'unexpected count'}`,
+    );
+  }
+
+  const customerMarkRead = await customerClient.rpc('mark_conversation_read', {
+    p_conversation_id: selectedConversationRead.data.id,
+  });
+
+  if (customerMarkRead.error || customerMarkRead.data?.[0]?.unread_count !== 0) {
+    throw new Error(
+      `Customer could not mark conversation read: ${customerMarkRead.error?.message ?? 'unexpected count'}`,
+    );
+  }
+
+  const thirdPartyConversationOpen = await bootstrapClient.rpc('get_conversation', {
+    p_conversation_id: selectedConversationRead.data.id,
+  });
+
+  if (thirdPartyConversationOpen.error || (thirdPartyConversationOpen.data ?? []).length !== 0) {
+    throw new Error(
+      `Third party unexpectedly opened conversation: ${thirdPartyConversationOpen.error?.message ?? 'unexpected rows'}`,
     );
   }
 

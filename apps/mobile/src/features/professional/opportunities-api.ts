@@ -37,6 +37,8 @@ interface ApplicationRow {
   status: ProfessionalApplication['status'];
   conversation_id?: string | null;
   unread_count?: number | null;
+  last_message_body?: string | null;
+  last_message_at?: string | null;
   created_at: string;
   updated_at: string;
   withdrawn_at: string | null;
@@ -52,6 +54,8 @@ interface SelectedJobRpcRow {
   selected_at: string | null;
   conversation_id: string | null;
   unread_count: number | null;
+  last_message_body: string | null;
+  last_message_at: string | null;
 }
 
 function mapOpportunity(row: OpportunityRpcRow): ProfessionalOpportunity {
@@ -94,6 +98,8 @@ function mapApplication(row: ApplicationRow): ProfessionalApplication {
     status: row.status,
     conversationId: row.conversation_id ?? null,
     unreadCount: row.unread_count ?? 0,
+    lastMessageBody: row.last_message_body ?? null,
+    lastMessageAt: row.last_message_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     withdrawnAt: row.withdrawn_at,
@@ -111,6 +117,8 @@ function mapSelectedJob(row: SelectedJobRpcRow): ProfessionalSelectedJob {
     selectedAt: row.selected_at,
     conversationId: row.conversation_id,
     unreadCount: row.unread_count ?? 0,
+    lastMessageBody: row.last_message_body,
+    lastMessageAt: row.last_message_at,
   };
 }
 

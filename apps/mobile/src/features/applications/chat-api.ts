@@ -8,9 +8,16 @@ interface ConversationRow {
   conversation_id: string;
   application_id: string;
   request_id: string;
+  request_title?: string | null;
   customer_id: string;
   professional_id: string;
   status: ApplicationConversation['status'];
+  application_status?: ApplicationConversation['applicationStatus'];
+  request_status?: ApplicationConversation['requestStatus'];
+  counterpart_user_id?: string | null;
+  counterpart_name?: string | null;
+  last_message_body?: string | null;
+  last_message_at?: string | null;
   created_at: string;
   updated_at: string;
   unread_count: number | null;
@@ -32,9 +39,16 @@ function mapConversation(row: ConversationRow): ApplicationConversation {
     id: row.conversation_id,
     applicationId: row.application_id,
     requestId: row.request_id,
+    requestTitle: row.request_title ?? null,
     customerId: row.customer_id,
     professionalId: row.professional_id,
     status: row.status,
+    applicationStatus: row.application_status ?? null,
+    requestStatus: row.request_status ?? null,
+    counterpartUserId: row.counterpart_user_id ?? null,
+    counterpartName: row.counterpart_name ?? null,
+    lastMessageBody: row.last_message_body ?? null,
+    lastMessageAt: row.last_message_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     unreadCount: row.unread_count ?? 0,
@@ -71,6 +85,26 @@ export async function ensureApplicationConversation(
 
   if (!firstRow) {
     throw new Error('No pudimos abrir esta conversación.');
+  }
+
+  return mapConversation(firstRow);
+}
+
+export async function getConversation(conversationId: string): Promise<ApplicationConversation> {
+  const { data, error } = await supabase.rpc('get_conversation', {
+    p_conversation_id: conversationId,
+  });
+
+  if (error) {
+    logDevelopmentSupabaseError('application-chat:get-conversation', error);
+    throw error;
+  }
+
+  const rows = (data ?? []) as ConversationRow[];
+  const firstRow = rows[0];
+
+  if (!firstRow) {
+    throw new Error('No pudimos abrir esta conversaciÃ³n.');
   }
 
   return mapConversation(firstRow);
