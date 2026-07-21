@@ -1,15 +1,20 @@
 import { useMemo, useState } from 'react';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { router, type Href } from 'expo-router';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
+  getApplicationProposalTypeLabel,
   getProfileDisplayName,
   getServiceRequestStatusLabel,
   getServiceRequestTypeLabel,
   getServiceRequestUrgencyLabel,
 } from '@casaticket/domain';
-import type { ServiceRequestWithCategory } from '@casaticket/types';
+import type {
+  CustomerRequestApplication,
+  CustomerSelectionResult,
+  ServiceRequestWithCategory,
+} from '@casaticket/types';
 import type { CreateServiceRequestInput, CustomerOnboardingInput } from '@casaticket/validation';
 
 import { Avatar } from '@/components/ui/avatar';
@@ -19,6 +24,8 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorState } from '@/components/ui/error-state';
 import { LoadingState } from '@/components/ui/loading-state';
 import { Screen } from '@/components/ui/screen';
+import { getVerificationLabel, StatusBadge } from '@/components/ui/status-badge';
+import { ensureApplicationConversation } from '@/features/applications/chat-api';
 import { useAuthSession } from '@/features/auth/auth-provider';
 import { listActiveCategories } from '@/features/categories/api';
 import { CustomerProfileForm } from '@/features/customer/customer-profile-form';
@@ -27,7 +34,10 @@ import {
   cancelOwnServiceRequest,
   createServiceRequest,
   getOwnServiceRequest,
+  listCustomerRequestApplications,
   listOwnServiceRequests,
+  markCustomerApplicationViewed,
+  selectProfessionalForRequest,
 } from '@/features/customer/service-requests-api';
 import { resolveAppRoute } from '@/features/navigation/access';
 import { fetchOwnDefaultAddress, saveCustomerOnboarding } from '@/features/profile/api';
@@ -222,12 +232,21 @@ export function CustomerRequestsScreen() {
 export function CustomerRequestDetailScreen({ requestId }: { requestId: string }) {
   const queryClient = useQueryClient();
   const { sessionState } = useAuthSession();
+  const [expandedApplicationId, setExpandedApplicationId] = useState<string | null>(null);
   const requestQuery = useQuery({
     queryKey:
       sessionState.status === 'authenticated'
         ? queryKeys.serviceRequest(sessionState.user.id, requestId)
         : ['service-request', requestId],
     queryFn: () => getOwnServiceRequest(requestId),
+    enabled: sessionState.status === 'authenticated' && requestId.length > 0,
+  });
+  const applicationsQuery = useQuery({
+    queryKey:
+      sessionState.status === 'authenticated'
+        ? queryKeys.customerRequestApplications(sessionState.user.id, requestId)
+        : ['customer-request-applications', requestId],
+    queryFn: () => listCustomerRequestApplications(requestId),
     enabled: sessionState.status === 'authenticated' && requestId.length > 0,
   });
   const cancelMutation = useMutation({
@@ -250,11 +269,94 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
       );
     },
   });
+  const markViewedMutation = useMutation({
+    mutationFn: markCustomerApplicationViewed,
+    onSuccess: (viewedApplication) => {
+      if (sessionState.status !== 'authenticated') {
+        return;
+      }
 
-  if (requestQuery.isPending) {
+      queryClient.setQueryData<CustomerRequestApplication[]>(
+        queryKeys.customerRequestApplications(sessionState.user.id, requestId),
+        (currentApplications = []) =>
+          currentApplications.map((application) =>
+            application.id === viewedApplication.application_id
+              ? { ...application, status: viewedApplication.status }
+              : application,
+          ),
+      );
+    },
+  });
+  const selectMutation = useMutation({
+    mutationFn: (application: CustomerRequestApplication) =>
+      selectProfessionalForRequest(requestId, application.id),
+    onSuccess: (selection) => {
+      if (sessionState.status !== 'authenticated') {
+        return;
+      }
+
+      syncSelectionCache({
+        queryClient,
+        request: requestQuery.data ?? null,
+        selection,
+        userId: sessionState.user.id,
+      });
+
+      if (process.env.NODE_ENV !== 'production') {
+        console.info('[customer-applications] professional selected', {
+          requestId: selection.requestId,
+          selectedApplicationId: selection.selectedApplicationId,
+          selectedProfessionalId: selection.selectedProfessionalId,
+          requestStatus: selection.requestStatus,
+          requestCacheUpdated: Boolean(
+            queryClient.getQueryData(queryKeys.serviceRequest(sessionState.user.id, selection.requestId)),
+          ),
+          applicationsCacheUpdated: Boolean(
+            queryClient.getQueryData(
+              queryKeys.customerRequestApplications(sessionState.user.id, selection.requestId),
+            ),
+          ),
+        });
+      }
+    },
+  });
+  const openConversationMutation = useMutation({
+    mutationFn: ensureApplicationConversation,
+    onSuccess: (conversation, applicationId) => {
+      if (sessionState.status !== 'authenticated') {
+        return;
+      }
+
+      queryClient.setQueryData(queryKeys.applicationConversation(applicationId), conversation);
+      updateCustomerApplicationChatCache({
+        applicationId,
+        patch: { conversationId: conversation.id, unreadCount: conversation.unreadCount },
+        queryClient,
+        requestId,
+        userId: sessionState.user.id,
+      });
+      navigateToConversation(conversation.id);
+    },
+  });
+  const navigateToConversation = (conversationId: string) => {
+    router.push({
+      pathname: '/chat/[conversationId]',
+      params: { conversationId },
+    } as Href);
+  };
+
+  if (requestQuery.isPending || applicationsQuery.isPending) {
     return (
       <Screen subtitle="Buscando la información de tu solicitud." title="Detalle">
         <LoadingState message="Cargando solicitud..." />
+      </Screen>
+    );
+  }
+
+  if (sessionState.status !== 'authenticated') {
+    return (
+      <Screen subtitle="Necesitás iniciar sesión para ver esta solicitud." title="Detalle">
+        <ErrorState message="No encontramos una sesión activa." />
       </Screen>
     );
   }
@@ -270,7 +372,19 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
     );
   }
 
+  if (applicationsQuery.error) {
+    return (
+      <Screen subtitle="Buscando postulaciones recibidas." title={requestQuery.data.title}>
+        <ErrorState
+          message="No pudimos cargar las postulaciones."
+          onRetry={() => void applicationsQuery.refetch()}
+        />
+      </Screen>
+    );
+  }
+
   const request = requestQuery.data;
+  const applications = applicationsQuery.data ?? [];
   const confirmCancel = () => {
     Alert.alert(
       'Cancelar solicitud',
@@ -297,6 +411,56 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
       {cancelMutation.error ? (
         <ErrorState message="No pudimos cancelar la solicitud." title="Cancelación fallida" />
       ) : null}
+      {selectMutation.error ? (
+        <ErrorState message="No pudimos seleccionar este profesional." title="Selección fallida" />
+      ) : null}
+      {openConversationMutation.error ? (
+        <ErrorState message="No pudimos abrir la conversacion." title="Chat no disponible" />
+      ) : null}
+      <CustomerApplicationsSection
+        applications={applications}
+        expandedApplicationId={expandedApplicationId}
+        loadingApplicationId={selectMutation.variables?.id ?? null}
+        markingViewed={markViewedMutation.isPending}
+        onOpenApplication={(application) => {
+          setExpandedApplicationId((currentId) =>
+            currentId === application.id ? null : application.id,
+          );
+
+          if (application.status === 'submitted') {
+            void markViewedMutation.mutateAsync(application.id).catch((error) => {
+              logDevelopmentSupabaseError('customer-applications:mark-viewed-screen', error);
+            });
+          }
+        }}
+        onOpenChat={(application) => {
+          setExpandedApplicationId(application.id);
+
+          if (application.conversationId) {
+            navigateToConversation(application.conversationId);
+            return;
+          }
+
+          void openConversationMutation.mutateAsync(application.id).catch((error) => {
+            logDevelopmentSupabaseError('customer-applications:open-chat', error);
+          });
+        }}
+        onSelectApplication={(application) => {
+          Alert.alert(
+            '¿Querés elegir a este profesional?',
+            'La selección no se podrá cambiar libremente. Las demás propuestas serán rechazadas. Todavía no se habilitan pagos ni chat en esta fase.',
+            [
+              { style: 'cancel', text: 'Volver' },
+              {
+                onPress: () => void selectMutation.mutateAsync(application),
+                text: 'Seleccionar profesional',
+              },
+            ],
+          );
+        }}
+        request={request}
+        selecting={selectMutation.isPending}
+      />
     </Screen>
   );
 }
@@ -467,6 +631,295 @@ function ServiceRequestDetailCard({ request }: { request: ServiceRequestWithCate
   );
 }
 
+function CustomerApplicationsSection({
+  applications,
+  expandedApplicationId,
+  loadingApplicationId,
+  markingViewed,
+  onOpenApplication,
+  onOpenChat,
+  onSelectApplication,
+  request,
+  selecting,
+}: {
+  applications: CustomerRequestApplication[];
+  expandedApplicationId: string | null;
+  loadingApplicationId: string | null;
+  markingViewed: boolean;
+  onOpenApplication: (application: CustomerRequestApplication) => void;
+  onOpenChat: (application: CustomerRequestApplication) => void;
+  onSelectApplication: (application: CustomerRequestApplication) => void;
+  request: ServiceRequestWithCategory;
+  selecting: boolean;
+}) {
+  const selectedApplication = applications.find((application) => application.status === 'selected') ?? null;
+
+  return (
+    <Card>
+      <View style={styles.requestCard}>
+        <Text style={styles.requestTitle}>Profesionales interesados</Text>
+        <Text style={styles.requestMeta}>
+          {applications.length === 1
+            ? '1 postulacion recibida'
+            : `${applications.length} postulaciones recibidas`}
+        </Text>
+        {selectedApplication ? (
+          <StatusBadge
+            tone="success"
+            value={`Profesional seleccionado: ${getProfessionalDisplayName(selectedApplication)}`}
+          />
+        ) : null}
+        {applications.length === 0 ? (
+          <EmptyState
+            description="Cuando un profesional compatible se postule, vas a ver su propuesta aca."
+            title="Sin postulaciones todavia"
+          />
+        ) : (
+          applications.map((application) => (
+            <CustomerApplicationCard
+              application={application}
+              expanded={expandedApplicationId === application.id}
+              key={application.id}
+              loading={selecting && loadingApplicationId === application.id}
+              markingViewed={markingViewed && expandedApplicationId === application.id}
+              onOpen={() => onOpenApplication(application)}
+              onOpenChat={() => onOpenChat(application)}
+              onSelect={() => onSelectApplication(application)}
+              request={request}
+              selecting={selecting}
+            />
+          ))
+        )}
+      </View>
+    </Card>
+  );
+}
+
+function CustomerApplicationCard({
+  application,
+  expanded,
+  loading,
+  markingViewed,
+  onOpen,
+  onOpenChat,
+  onSelect,
+  request,
+  selecting,
+}: {
+  application: CustomerRequestApplication;
+  expanded: boolean;
+  loading: boolean;
+  markingViewed: boolean;
+  onOpen: () => void;
+  onOpenChat: () => void;
+  onSelect: () => void;
+  request: ServiceRequestWithCategory;
+  selecting: boolean;
+}) {
+  const canSelect =
+    ['published', 'receiving_applications'].includes(request.status) &&
+    ['submitted', 'viewed'].includes(application.status);
+
+  return (
+    <View style={styles.applicationCard}>
+      <Pressable onPress={onOpen} style={styles.applicationHeader}>
+        <View style={styles.copy}>
+          <Text style={styles.requestTitle}>{getProfessionalDisplayName(application)}</Text>
+          {application.unreadCount > 0 ? (
+            <Text style={styles.unreadText}>{application.unreadCount} mensajes sin leer</Text>
+          ) : null}
+          <Text style={styles.requestMeta}>
+            {application.professionalCategoryNames.join(', ') || 'Sin rubros cargados'} ·{' '}
+            {application.professionalYearsExperience ?? 0} anos de experiencia
+          </Text>
+          <Text style={styles.requestMeta}>
+            {application.professionalBaseCity} · Radio {application.professionalServiceRadiusKm} km
+          </Text>
+        </View>
+        <StatusBadge tone={getApplicationStatusTone(application.status)} value={getCustomerApplicationStatusLabel(application.status)} />
+      </Pressable>
+
+      <Text style={styles.requestDescription}>{application.message}</Text>
+      <Text style={styles.requestMeta}>Disponibilidad: {application.availabilityText}</Text>
+      <Text style={styles.requestMeta}>
+        Propuesta: {getApplicationProposalTypeLabel(application.proposalType)}
+      </Text>
+      <Text style={styles.requestMeta}>
+        Visita: {formatPrice(application.visitPrice) ?? 'Sin precio de visita'} · Estimado:{' '}
+        {formatPrice(application.estimatedPrice) ?? 'Sin precio estimado'}
+      </Text>
+      <Text style={styles.requestMeta}>
+        Duracion: {application.estimatedDurationText ?? 'Sin duracion estimada'}
+      </Text>
+      <Text style={styles.requestMeta}>Postulacion: {formatDateTime(application.createdAt)}</Text>
+
+      {expanded ? (
+        <View style={styles.applicationDetails}>
+          <Text style={styles.requestTitle}>Perfil publico</Text>
+          <Text style={styles.requestMeta}>
+            Verificacion: {getVerificationLabel(application.professionalVerificationStatus)}
+          </Text>
+          <Text style={styles.requestDescription}>
+            {application.professionalBio ?? 'Este profesional todavia no cargo una bio.'}
+          </Text>
+          <ConversationSummary
+            lastMessageAt={application.lastMessageAt}
+            lastMessageBody={application.lastMessageBody}
+            unreadCount={application.unreadCount}
+          />
+          {markingViewed ? <Text style={styles.requestMeta}>Marcando como vista...</Text> : null}
+          <Button onPress={onOpenChat} variant="secondary">
+            Abrir conversacion
+          </Button>
+          {canSelect ? (
+            <Button disabled={selecting} onPress={onSelect}>
+              {loading ? 'Seleccionando...' : 'Seleccionar profesional'}
+            </Button>
+          ) : null}
+        </View>
+      ) : (
+        <Button onPress={onOpen} variant="secondary">
+          Ver perfil y propuesta
+        </Button>
+      )}
+    </View>
+  );
+}
+
+function ConversationSummary({
+  lastMessageAt,
+  lastMessageBody,
+  unreadCount,
+}: {
+  lastMessageAt: string | null;
+  lastMessageBody: string | null;
+  unreadCount: number;
+}) {
+  return (
+    <View style={styles.conversationSummary}>
+      <View style={styles.copy}>
+        <Text style={styles.requestTitle}>Conversacion</Text>
+        <Text numberOfLines={2} style={styles.requestMeta}>
+          {lastMessageBody ? `Ultimo mensaje: ${lastMessageBody}` : 'Todavia no hay mensajes.'}
+        </Text>
+        {lastMessageAt ? <Text style={styles.requestMeta}>{formatDateTime(lastMessageAt)}</Text> : null}
+      </View>
+      {unreadCount > 0 ? <Text style={styles.unreadBadge}>{unreadCount}</Text> : null}
+    </View>
+  );
+}
+
+function syncSelectionCache({
+  queryClient,
+  request,
+  selection,
+  userId,
+}: {
+  queryClient: QueryClient;
+  request: ServiceRequestWithCategory | null;
+  selection: CustomerSelectionResult;
+  userId: string;
+}) {
+  const updatedRequest = request
+    ? {
+        ...request,
+        status: selection.requestStatus,
+        selectedProfessionalId: selection.selectedProfessionalId,
+        selectedAt: selection.selectedAt,
+      }
+    : null;
+
+  if (updatedRequest) {
+    queryClient.setQueryData(queryKeys.serviceRequest(userId, selection.requestId), updatedRequest);
+  }
+
+  queryClient.setQueryData<ServiceRequestWithCategory[]>(
+    queryKeys.serviceRequests(userId),
+    (currentRequests = []) =>
+      currentRequests.map((currentRequest) =>
+        currentRequest.id === selection.requestId
+          ? {
+              ...currentRequest,
+              status: selection.requestStatus,
+              selectedProfessionalId: selection.selectedProfessionalId,
+              selectedAt: selection.selectedAt,
+            }
+          : currentRequest,
+      ),
+  );
+
+  queryClient.setQueryData<CustomerRequestApplication[]>(
+    queryKeys.customerRequestApplications(userId, selection.requestId),
+    (currentApplications = []) =>
+      currentApplications.map((currentApplication) => {
+        if (currentApplication.id === selection.selectedApplicationId) {
+          return { ...currentApplication, status: 'selected' };
+        }
+
+        if (['submitted', 'viewed'].includes(currentApplication.status)) {
+          return { ...currentApplication, status: 'rejected' };
+        }
+
+        return currentApplication;
+      }),
+  );
+}
+
+function updateCustomerApplicationChatCache({
+  applicationId,
+  patch,
+  queryClient,
+  requestId,
+  userId,
+}: {
+  applicationId: string;
+  patch: Partial<Pick<CustomerRequestApplication, 'conversationId' | 'unreadCount'>>;
+  queryClient: QueryClient;
+  requestId: string;
+  userId: string;
+}) {
+  queryClient.setQueryData<CustomerRequestApplication[]>(
+    queryKeys.customerRequestApplications(userId, requestId),
+    (currentApplications = []) =>
+      currentApplications.map((application) =>
+        application.id === applicationId ? { ...application, ...patch } : application,
+      ),
+  );
+}
+
+function getProfessionalDisplayName(application: CustomerRequestApplication): string {
+  return `${application.professionalFirstName} ${application.professionalLastName}`.trim();
+}
+
+function getCustomerApplicationStatusLabel(status: CustomerRequestApplication['status']): string {
+  switch (status) {
+    case 'submitted':
+      return 'Nueva';
+    case 'viewed':
+      return 'Vista';
+    case 'selected':
+      return 'Seleccionada';
+    case 'rejected':
+      return 'No seleccionada';
+    case 'withdrawn':
+      return 'Retirada';
+  }
+}
+
+function getApplicationStatusTone(status: CustomerRequestApplication['status']) {
+  switch (status) {
+    case 'selected':
+      return 'success';
+    case 'rejected':
+    case 'withdrawn':
+      return 'neutral';
+    case 'viewed':
+      return 'accent';
+    case 'submitted':
+      return 'warning';
+  }
+}
+
 function formatDateTime(value: string | null): string {
   if (!value) {
     return 'Sin fecha';
@@ -476,6 +929,18 @@ function formatDateTime(value: string | null): string {
     dateStyle: 'short',
     timeStyle: 'short',
   }).format(new Date(value));
+}
+
+function formatPrice(value: number | null): string | null {
+  if (value === null) {
+    return null;
+  }
+
+  return new Intl.NumberFormat('es-AR', {
+    currency: 'ARS',
+    maximumFractionDigits: 0,
+    style: 'currency',
+  }).format(value);
 }
 
 const styles = StyleSheet.create({
@@ -515,5 +980,53 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     color: '#1d1811',
+  },
+  applicationCard: {
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#eadcc8',
+    paddingTop: 14,
+  },
+  applicationHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  applicationDetails: {
+    gap: 10,
+    borderRadius: 16,
+    backgroundColor: '#fff8ef',
+    padding: 12,
+  },
+  conversationSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 14,
+    backgroundColor: '#f3eadc',
+    padding: 12,
+  },
+  unreadBadge: {
+    minWidth: 28,
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: '#bb5e3c',
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    textAlign: 'center',
+  },
+  unreadText: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    overflow: 'hidden',
+    backgroundColor: '#bb5e3c',
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
 });

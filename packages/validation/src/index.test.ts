@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   customerOnboardingSchema,
+  createApplicationSchema,
+  createMessageSchema,
   createServiceRequestSchema,
   professionalOnboardingSchema,
   roleSelectionSchema,
@@ -161,5 +163,35 @@ describe('validation schemas', () => {
         availabilityNotes: '',
       }).success,
     ).toBe(false);
+  });
+
+  it('validates professional applications', () => {
+    const validPayload = {
+      message: 'Puedo acercarme esta semana y revisar la instalación con herramientas propias.',
+      proposalType: 'diagnostic_visit' as const,
+      visitPrice: 5000,
+      estimatedPrice: null,
+      estimatedDurationText: '',
+      availabilityText: 'Martes o jueves por la tarde.',
+    };
+
+    expect(createApplicationSchema.safeParse(validPayload).success).toBe(true);
+    expect(createApplicationSchema.safeParse({ ...validPayload, message: 'Muy corto.' }).success).toBe(false);
+    expect(createApplicationSchema.safeParse({ ...validPayload, visitPrice: -1 }).success).toBe(false);
+    expect(createApplicationSchema.safeParse({ ...validPayload, visitPrice: null }).success).toBe(false);
+    expect(
+      createApplicationSchema.safeParse({
+        ...validPayload,
+        proposalType: 'preliminary_quote',
+        visitPrice: null,
+        estimatedPrice: 25000,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('validates chat messages', () => {
+    expect(createMessageSchema.safeParse({ body: ' Hola ' }).success).toBe(true);
+    expect(createMessageSchema.safeParse({ body: '   ' }).success).toBe(false);
+    expect(createMessageSchema.safeParse({ body: 'a'.repeat(2001) }).success).toBe(false);
   });
 });

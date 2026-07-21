@@ -47,6 +47,10 @@ jest.mock('@/features/auth/auth-provider', () => ({
   }),
 }));
 
+jest.mock('@/features/applications/chat-api', () => ({
+  ensureApplicationConversation: jest.fn(),
+}));
+
 jest.mock('@/features/professional/professional-profile-form', () => {
   const React = jest.requireActual('react');
   const { Pressable, Text } = jest.requireActual('react-native');
@@ -93,6 +97,16 @@ jest.mock('@/features/categories/api', () => ({
 
 jest.mock('@/features/profile/api', () => ({
   saveProfessionalOnboarding: (...args: unknown[]) => mockSaveProfessionalOnboarding(...args),
+}));
+
+jest.mock('@/features/professional/opportunities-api', () => ({
+  createApplication: jest.fn(),
+  getOwnApplication: jest.fn(),
+  getProfessionalOpportunity: jest.fn(),
+  listOwnApplications: jest.fn(),
+  listProfessionalOpportunities: jest.fn(),
+  listProfessionalSelectedJobs: jest.fn(),
+  withdrawApplication: jest.fn(),
 }));
 
 import { ProfessionalOnboardingScreen } from '@/features/professional/screens';

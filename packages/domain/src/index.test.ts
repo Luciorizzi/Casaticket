@@ -2,12 +2,16 @@ import { describe, expect, it } from 'vitest';
 
 import {
   canSelfAssignRole,
+  getApplicationProposalTypeLabel,
+  getApplicationStatusLabel,
   getAvailabilityLabel,
+  getConversationStatusLabel,
   getProfileDisplayName,
   getServiceRequestStatusLabel,
   getServiceRequestTypeLabel,
   getServiceRequestUrgencyLabel,
   getCoverageSummary,
+  hasPotentialContactInfo,
   isAvailabilityStatus,
   isSelectableMobileRole,
   isServiceRadiusValid,
@@ -51,6 +55,17 @@ describe('domain guards', () => {
   it('returns readable service request labels in Spanish', () => {
     expect(getServiceRequestTypeLabel('diagnostic_visit')).toBe('Necesito visita diagnóstica');
     expect(getServiceRequestUrgencyLabel('urgent')).toBe('Urgente');
-    expect(getServiceRequestStatusLabel('cancelled')).toBe('Cancelada');
+    expect(getServiceRequestStatusLabel('professional_selected')).toBe('Profesional seleccionado');
+  });
+
+  it('returns readable application labels in Spanish', () => {
+    expect(getApplicationProposalTypeLabel('preliminary_quote')).toBe('Cotización preliminar');
+    expect(getApplicationStatusLabel('withdrawn')).toBe('Retirada');
+  });
+  it('labels conversations and detects contact-like content', () => {
+    expect(getConversationStatusLabel('read_only')).toBe('Solo lectura');
+    expect(hasPotentialContactInfo('Escribime a demo@casaticket.local')).toBe(true);
+    expect(hasPotentialContactInfo('Mi telefono es 1122334455')).toBe(true);
+    expect(hasPotentialContactInfo('Coordinemos por este chat')).toBe(false);
   });
 });

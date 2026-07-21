@@ -50,6 +50,10 @@ jest.mock('@/features/auth/auth-provider', () => ({
   }),
 }));
 
+jest.mock('@/features/applications/chat-api', () => ({
+  ensureApplicationConversation: jest.fn(),
+}));
+
 jest.mock('@/features/profile/api', () => ({
   fetchOwnDefaultAddress: () => mockFetchOwnDefaultAddress(),
   saveCustomerOnboarding: (...args: unknown[]) => mockSaveCustomerOnboarding(...args),
@@ -63,7 +67,10 @@ jest.mock('@/features/customer/service-requests-api', () => ({
   cancelOwnServiceRequest: jest.fn(),
   createServiceRequest: jest.fn(),
   getOwnServiceRequest: jest.fn(),
+  listCustomerRequestApplications: jest.fn(),
   listOwnServiceRequests: jest.fn(),
+  markCustomerApplicationViewed: jest.fn(),
+  selectProfessionalForRequest: jest.fn(),
 }));
 
 import { CustomerOnboardingScreen } from '@/features/customer/screens';

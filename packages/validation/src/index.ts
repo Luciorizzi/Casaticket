@@ -1,5 +1,6 @@
 import {
   COVERAGE_LIMITS,
+  APPLICATION_PROPOSAL_TYPES,
   MOBILE_SELECTABLE_ROLES,
   PROFESSIONAL_AVAILABILITY_STATUSES,
   SERVICE_REQUEST_TYPES,
@@ -144,6 +145,65 @@ export const createServiceRequestSchema = z
     path: ['categoryId'],
   });
 
+const optionalNonNegativeNumber = z.preprocess(
+  (value) => {
+    if (value === '' || value === null || typeof value === 'undefined') {
+      return null;
+    }
+
+    return value;
+  },
+  z
+    .number({
+      invalid_type_error: 'Ingresá un precio válido.',
+    })
+    .min(0, 'El precio no puede ser negativo.')
+    .nullable(),
+);
+
+export const createApplicationSchema = z
+  .object({
+    message: requiredText('El mensaje', 20, 1000),
+    proposalType: z.enum(APPLICATION_PROPOSAL_TYPES, {
+      errorMap: () => ({ message: 'Elegí un tipo de propuesta válido.' }),
+    }),
+    visitPrice: optionalNonNegativeNumber,
+    estimatedPrice: optionalNonNegativeNumber,
+    estimatedDurationText: optionalShortText(120, 'La duración estimada es demasiado larga.'),
+    availabilityText: requiredText('La disponibilidad', 2, 300),
+  })
+  .superRefine((values, context) => {
+    if (values.proposalType === 'diagnostic_visit' && values.visitPrice === null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Indicá el precio de la visita diagnóstica.',
+        path: ['visitPrice'],
+      });
+    }
+
+    if (
+      (values.proposalType === 'preliminary_quote' || values.proposalType === 'direct_service') &&
+      values.estimatedPrice === null
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Indicá un precio estimado para esta propuesta.',
+        path: ['estimatedPrice'],
+      });
+    }
+  });
+
+export const createMessageSchema = z.object({
+  body: z
+    .string({
+      required_error: 'Escribí un mensaje.',
+      invalid_type_error: 'Escribí un mensaje.',
+    })
+    .trim()
+    .min(1, 'Escribí un mensaje.')
+    .max(2000, 'El mensaje no puede superar 2000 caracteres.'),
+});
+
 export type RoleSelectionInput = z.infer<typeof roleSelectionSchema>;
 export type SignInInput = z.infer<typeof signInSchema>;
 export type SignUpInput = z.infer<typeof signUpSchema>;
@@ -154,3 +214,5 @@ export type CustomerAddressInput = z.infer<typeof customerAddressSchema>;
 export type CustomerOnboardingInput = z.infer<typeof customerOnboardingSchema>;
 export type ProfessionalOnboardingInput = z.infer<typeof professionalOnboardingSchema>;
 export type CreateServiceRequestInput = z.infer<typeof createServiceRequestSchema>;
+export type CreateApplicationInput = z.infer<typeof createApplicationSchema>;
+export type CreateMessageInput = z.infer<typeof createMessageSchema>;
