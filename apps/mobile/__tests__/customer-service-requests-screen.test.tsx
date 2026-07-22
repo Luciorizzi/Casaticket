@@ -13,6 +13,8 @@ import { queryKeys } from '@/lib/query-keys';
 
 const mockReplace = jest.fn();
 const mockPush = jest.fn();
+const mockBack = jest.fn();
+const mockCanGoBack = jest.fn();
 const mockCreateServiceRequest = jest.fn();
 const mockGetOwnServiceRequest = jest.fn();
 const mockCancelOwnServiceRequest = jest.fn();
@@ -25,9 +27,15 @@ const mockEnsureApplicationConversation = jest.fn();
 
 jest.mock('expo-router', () => ({
   router: {
+    back: (...args: unknown[]) => mockBack(...args),
     push: (...args: unknown[]) => mockPush(...args),
     replace: (...args: unknown[]) => mockReplace(...args),
   },
+  useRouter: () => ({
+    back: (...args: unknown[]) => mockBack(...args),
+    canGoBack: (...args: unknown[]) => mockCanGoBack(...args),
+    replace: (...args: unknown[]) => mockReplace(...args),
+  }),
 }));
 
 jest.mock('@/features/auth/auth-provider', () => ({
@@ -60,6 +68,14 @@ jest.mock('@/features/auth/auth-provider', () => ({
 
 jest.mock('@/features/applications/chat-api', () => ({
   ensureApplicationConversation: (...args: unknown[]) => mockEnsureApplicationConversation(...args),
+}));
+
+jest.mock('@/features/applications/job-panel', () => ({
+  JobPanel: () => null,
+}));
+jest.mock('@/features/jobs/customer-job-panel', () => ({
+  CustomerJobPanel: () => null,
+  CustomerJobSummaryPanel: () => null,
 }));
 
 jest.mock('@/features/customer/service-request-form', () => {
@@ -123,8 +139,10 @@ jest.mock('@/features/profile/api', () => ({
 }));
 
 import {
+  CustomerApplicationDetailScreen,
   CustomerCreateRequestScreen,
   CustomerRequestDetailScreen,
+  CustomerRequestDetailsScreen,
 } from '@/features/customer/screens';
 
 const activeQueryClients: QueryClient[] = [];
@@ -229,6 +247,7 @@ describe('customer service request screens', () => {
       buttons?.[1]?.onPress?.();
     });
     mockListActiveCategories.mockResolvedValue([category]);
+    mockCanGoBack.mockReturnValue(true);
     mockListCustomerRequestApplications.mockResolvedValue([]);
     mockMarkCustomerApplicationViewed.mockResolvedValue({
       application_id: 'application-1',
@@ -324,7 +343,11 @@ describe('customer service request screens', () => {
     await waitFor(() => {
       expect(mockMarkCustomerApplicationViewed.mock.calls[0]?.[0]).toBe('application-1');
     });
-    expect(screen.getByText('Perfil publico')).toBeTruthy();
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: '/(customer)/requests/[id]/applications/[applicationId]',
+      params: { applicationId: 'application-1', id: 'request-1' },
+    });
+    expect(screen.queryByText('Bio pública.')).toBeNull();
   });
 
   it('opens a dedicated chat route from an application summary', async () => {
@@ -342,16 +365,15 @@ describe('customer service request screens', () => {
       expect(screen.getByText('Ver perfil y propuesta')).toBeTruthy();
     });
 
-    fireEvent.press(screen.getByText('Ver perfil y propuesta'));
-    fireEvent.press(screen.getByText('Abrir conversacion'));
+    fireEvent.press(screen.getByText('Abrir conversación'));
 
     expect(mockPush).toHaveBeenCalledWith({
       pathname: '/chat/[conversationId]',
       params: { conversationId: 'conversation-1' },
     });
-    expect(screen.getByText('Abrir conversacion')).toBeTruthy();
+    expect(screen.getByText('Abrir conversación')).toBeTruthy();
 
-    fireEvent.press(screen.getByText('Abrir conversacion'));
+    fireEvent.press(screen.getByText('Abrir conversación'));
 
     expect(mockPush).toHaveBeenCalledTimes(2);
     expect(mockEnsureApplicationConversation).not.toHaveBeenCalled();
@@ -375,15 +397,17 @@ describe('customer service request screens', () => {
       selectedProfessionalId: 'professional-1',
       selectedApplicationId: 'application-1',
       selectedAt: '2026-07-20T13:00:00.000Z',
+      jobId: 'job-1',
     });
-    const queryClient = renderWithQueryClient(<CustomerRequestDetailScreen requestId="request-1" />);
+    const queryClient = renderWithQueryClient(
+      <CustomerApplicationDetailScreen applicationId="application-1" requestId="request-1" />,
+    );
     queryClient.setQueryData(queryKeys.serviceRequests('user-1'), [publishedRequest]);
 
     await waitFor(() => {
-      expect(screen.getAllByText('Ver perfil y propuesta')[0]).toBeTruthy();
+      expect(screen.getByText('Seleccionar profesional')).toBeTruthy();
     });
 
-    fireEvent.press(screen.getAllByText('Ver perfil y propuesta')[0]);
     fireEvent.press(screen.getByText('Seleccionar profesional'));
 
     await waitFor(() => {
@@ -398,5 +422,114 @@ describe('customer service request screens', () => {
       expect.objectContaining({ id: 'application-1', status: 'selected' }),
       expect.objectContaining({ id: 'application-2', status: 'rejected' }),
     ]);
+  });
+
+  it('keeps request detail compact and navigates to request details', async () => {
+    mockGetOwnServiceRequest.mockResolvedValue(createRequest());
+    renderWithQueryClient(<CustomerRequestDetailScreen requestId="request-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Ver detalles de la solicitud')).toBeTruthy();
+    });
+
+    expect(screen.queryByText('Detalles de la solicitud')).toBeNull();
+    expect(screen.queryByText('Categoría')).toBeNull();
+
+    fireEvent.press(screen.getByText('Ver detalles de la solicitud'));
+
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: '/(customer)/requests/[id]/details',
+      params: { id: 'request-1' },
+    });
+  });
+
+  it('returns from request details using navigation history', async () => {
+    mockGetOwnServiceRequest.mockResolvedValue(createRequest());
+    renderWithQueryClient(<CustomerRequestDetailsScreen requestId="request-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Volver')).toBeTruthy();
+    });
+
+    fireEvent.press(screen.getByText('Volver'));
+
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(mockReplace).not.toHaveBeenCalledWith({
+      pathname: '/(customer)/requests/[id]',
+      params: { id: 'request-1' },
+    });
+  });
+
+  it('falls back to the same request when details has no history', async () => {
+    mockCanGoBack.mockReturnValue(false);
+    mockGetOwnServiceRequest.mockResolvedValue(createRequest());
+    renderWithQueryClient(<CustomerRequestDetailsScreen requestId="request-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Volver')).toBeTruthy();
+    });
+
+    fireEvent.press(screen.getByText('Volver'));
+
+    expect(mockBack).not.toHaveBeenCalled();
+    expect(mockReplace).toHaveBeenCalledWith({
+      pathname: '/(customer)/requests/[id]',
+      params: { id: 'request-1' },
+    });
+  });
+
+  it('returns from profile and proposal using navigation history', async () => {
+    mockGetOwnServiceRequest.mockResolvedValue(createRequest());
+    mockListCustomerRequestApplications.mockResolvedValue([createCustomerApplication()]);
+    renderWithQueryClient(
+      <CustomerApplicationDetailScreen applicationId="application-1" requestId="request-1" />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Volver')).toBeTruthy();
+    });
+
+    fireEvent.press(screen.getByText('Volver'));
+
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(mockReplace).not.toHaveBeenCalledWith({
+      pathname: '/(customer)/requests/[id]',
+      params: { id: 'request-1' },
+    });
+  });
+
+  it('falls back to the request from profile and proposal without history', async () => {
+    mockCanGoBack.mockReturnValue(false);
+    mockGetOwnServiceRequest.mockResolvedValue(createRequest());
+    mockListCustomerRequestApplications.mockResolvedValue([createCustomerApplication()]);
+    renderWithQueryClient(
+      <CustomerApplicationDetailScreen applicationId="application-1" requestId="request-1" />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Volver')).toBeTruthy();
+    });
+
+    fireEvent.press(screen.getByText('Volver'));
+
+    expect(mockBack).not.toHaveBeenCalled();
+    expect(mockReplace).toHaveBeenCalledWith({
+      pathname: '/(customer)/requests/[id]',
+      params: { id: 'request-1' },
+    });
+  });
+
+  it('shows full request information in the dedicated details screen', async () => {
+    mockGetOwnServiceRequest.mockResolvedValue(createRequest());
+    renderWithQueryClient(<CustomerRequestDetailsScreen requestId="request-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Solicitud')).toBeTruthy();
+    });
+
+    expect(screen.getByText('Descripción')).toBeTruthy();
+    expect(screen.getByText('Tengo una pérdida debajo de la bacha de la cocina y necesito resolverla.')).toBeTruthy();
+    expect(screen.getAllByText('Estado').length).toBeGreaterThan(0);
+    expect(screen.getByText('Publicada')).toBeTruthy();
   });
 });

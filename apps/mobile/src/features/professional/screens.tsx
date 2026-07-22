@@ -29,6 +29,7 @@ import {
   getVerificationLabel,
   StatusBadge,
 } from '@/components/ui/status-badge';
+import { PrimaryActionBar, StatusHeader } from '@/components/ui/workflow';
 import { ensureApplicationConversation } from '@/features/applications/chat-api';
 import { useAuthSession } from '@/features/auth/auth-provider';
 import { listActiveCategories } from '@/features/categories/api';
@@ -43,6 +44,7 @@ import {
   listProfessionalSelectedJobs,
   withdrawApplication,
 } from '@/features/professional/opportunities-api';
+import { getMobileJobStatusLabel } from '@/features/jobs/status-labels';
 import { ProfessionalProfileForm } from '@/features/professional/professional-profile-form';
 import { saveProfessionalOnboarding } from '@/features/profile/api';
 import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
@@ -52,7 +54,7 @@ export function ProfessionalOnboardingScreen() {
   return (
     <ProfessionalProfileEditorScreen
       mode="onboarding"
-      subtitle="CompletÃ¡ tu perfil profesional para empezar a recibir oportunidades relevantes."
+      subtitle="Completá tu perfil profesional para empezar a recibir oportunidades relevantes."
       title="Tu perfil profesional"
     />
   );
@@ -79,15 +81,15 @@ export function ProfessionalHomeScreen() {
 
   if (!profile || !professionalProfile) {
     return (
-      <Screen subtitle="TodavÃ­a estamos resolviendo tu perfil profesional." title="Inicio">
-        <ErrorState message="No encontramos la informaciÃ³n profesional todavÃ­a." />
+      <Screen subtitle="Todavía estamos resolviendo tu perfil profesional." title="Inicio">
+        <ErrorState message="No encontramos la información profesional todavía." />
       </Screen>
     );
   }
 
   return (
     <Screen
-      subtitle="Desde acÃ¡ vas a gestionar tu disponibilidad y ver oportunidades compatibles."
+      subtitle="Desde acá vas a gestionar tu disponibilidad y ver oportunidades compatibles."
       title="Inicio profesional"
     >
       <Card>
@@ -96,7 +98,7 @@ export function ProfessionalHomeScreen() {
           <View style={styles.copy}>
             <Text style={styles.welcomeTitle}>Hola, {profile.firstName}</Text>
             <Text style={styles.welcomeText}>
-              Tu perfil ya quedÃ³ listo para recibir oportunidades del marketplace.
+              Tu perfil ya quedó listo para recibir oportunidades del marketplace.
             </Text>
           </View>
         </View>
@@ -112,13 +114,13 @@ export function ProfessionalHomeScreen() {
         </View>
         <Text style={styles.detailText}>Radio: {professionalProfile.serviceRadiusKm} km</Text>
         <Text style={styles.detailText}>
-          Rubros: {categoryLabels.join(', ') || 'TodavÃ­a sin rubros cargados'}
+          Rubros: {categoryLabels.join(', ') || 'Todavía sin rubros cargados'}
         </Text>
         <Button onPress={() => router.push('/(professional)/opportunities')}>Ver oportunidades</Button>
       </Card>
 
       <EmptyState
-        description="Las postulaciones ya se gestionan desde Oportunidades. La selecciÃ³n del profesional queda para una fase posterior."
+        description="Las postulaciones ya se gestionan desde Oportunidades. La selección del profesional queda para una fase posterior."
         title="Oportunidades disponibles"
       />
     </Screen>
@@ -154,11 +156,11 @@ export function ProfessionalOpportunitiesScreen() {
     [applicationsQuery.data],
   );
   const opportunities = opportunitiesQuery.data ?? [];
-  const categories = uniqueValues(opportunities.map((opportunity) => opportunity.categoryName ?? 'Sin categorÃ­a'));
+  const categories = uniqueValues(opportunities.map((opportunity) => opportunity.categoryName ?? 'Sin categoría'));
   const urgencies = uniqueValues(opportunities.map((opportunity) => opportunity.urgency));
   const cities = uniqueValues(opportunities.map((opportunity) => opportunity.city));
   const filteredOpportunities = opportunities.filter((opportunity) => {
-    const categoryName = opportunity.categoryName ?? 'Sin categorÃ­a';
+    const categoryName = opportunity.categoryName ?? 'Sin categoría';
 
     return (
       (!categoryFilter || categoryName === categoryFilter) &&
@@ -170,8 +172,8 @@ export function ProfessionalOpportunitiesScreen() {
 
   if (!professionalId) {
     return (
-      <Screen subtitle="TodavÃ­a estamos resolviendo tu perfil profesional." title="Oportunidades">
-        <ErrorState message="No encontramos tu perfil profesional todavÃ­a." />
+      <Screen subtitle="Todavía estamos resolviendo tu perfil profesional." title="Oportunidades">
+        <ErrorState message="No encontramos tu perfil profesional todavía." />
       </Screen>
     );
   }
@@ -200,7 +202,7 @@ export function ProfessionalOpportunitiesScreen() {
 
   return (
     <Screen
-      subtitle="Solicitudes publicadas compatibles con tus rubros. No mostramos direcciÃ³n exacta ni datos del cliente."
+      subtitle="Solicitudes publicadas compatibles con tus rubros. No mostramos dirección exacta ni datos del cliente."
       title="Oportunidades"
     >
       <OpportunityFilters
@@ -228,7 +230,7 @@ export function ProfessionalOpportunitiesScreen() {
       {filteredOpportunities.length === 0 ? (
         <EmptyState
           description="No hay solicitudes compatibles con los filtros actuales."
-          title="Sin oportunidades todavÃ­a"
+          title="Sin oportunidades todavía"
         />
       ) : (
         filteredOpportunities.map((opportunity) => (
@@ -327,8 +329,8 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
 
   if (!professionalId) {
     return (
-      <Screen subtitle="TodavÃ­a estamos resolviendo tu perfil profesional." title="Oportunidad">
-        <ErrorState message="No encontramos tu perfil profesional todavÃ­a." />
+      <Screen subtitle="Todavía estamos resolviendo tu perfil profesional." title="Oportunidad">
+        <ErrorState message="No encontramos tu perfil profesional todavía." />
       </Screen>
     );
   }
@@ -360,14 +362,14 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
     }
 
     Alert.alert(
-      'Retirar postulaciÃ³n',
-      'La postulaciÃ³n quedarÃ¡ visible para vos como retirada.',
+      'Retirar postulación',
+      'La postulación quedará visible para vos como retirada.',
       [
         { style: 'cancel', text: 'Volver' },
         {
           onPress: () => void withdrawMutation.mutateAsync(application),
           style: 'destructive',
-          text: 'Retirar postulaciÃ³n',
+          text: 'Retirar postulación',
         },
       ],
     );
@@ -392,7 +394,7 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
             }}
             variant="secondary"
           >
-            Abrir conversacion
+            Abrir conversación
           </Button>
           {openConversationMutation.error ? (
             <ErrorState message="No pudimos abrir la conversacion." title="Chat no disponible" />
@@ -400,7 +402,7 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
         </>
       ) : (
         <>
-          {error ? <ErrorState message={error} title="No pudimos enviar la postulaciÃ³n" /> : null}
+          {error ? <ErrorState message={error} title="No pudimos enviar la postulación" /> : null}
           <ApplicationForm
             loading={createMutation.isPending}
             onSubmit={async (values) => {
@@ -413,7 +415,7 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
                 setError(
                   getUserFacingErrorMessage(
                     submissionError,
-                    'No pudimos enviar la postulaciÃ³n.',
+                    'No pudimos enviar la postulación.',
                   ),
                 );
               }
@@ -423,11 +425,11 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
       )}
       {application && ['submitted', 'viewed'].includes(application.status) ? (
         <Button disabled={withdrawMutation.isPending} onPress={withdraw} variant="danger">
-          {withdrawMutation.isPending ? 'Retirando...' : 'Retirar postulaciÃ³n'}
+          {withdrawMutation.isPending ? 'Retirando...' : 'Retirar postulación'}
         </Button>
       ) : null}
       {withdrawMutation.error ? (
-        <ErrorState message="No pudimos retirar la postulaciÃ³n." title="Retiro fallido" />
+        <ErrorState message="No pudimos retirar la postulación." title="Retiro fallido" />
       ) : null}
     </Screen>
   );
@@ -473,8 +475,8 @@ export function ProfessionalJobsScreen() {
 
   if (!professionalId) {
     return (
-      <Screen subtitle="Todavia estamos resolviendo tu perfil profesional." title="Mis trabajos">
-        <ErrorState message="No encontramos tu perfil profesional todavia." />
+      <Screen subtitle="Todavía estamos resolviendo tu perfil profesional." title="Mis trabajos">
+        <ErrorState message="No encontramos tu perfil profesional todavía." />
       </Screen>
     );
   }
@@ -501,32 +503,51 @@ export function ProfessionalJobsScreen() {
   const selectedJobs = selectedJobsQuery.data ?? [];
 
   return (
-    <Screen subtitle="Solicitudes donde el cliente ya te eligiÃ³." title="Mis trabajos">
+    <Screen subtitle="Solicitudes donde el cliente ya te eligió." title="Mis trabajos">
       {openJobConversationMutation.error ? (
         <ErrorState message="No pudimos abrir la conversacion." title="Chat no disponible" />
       ) : null}
       {selectedJobs.length === 0 ? (
         <EmptyState
-          description="Cuando un cliente seleccione tu postulaciÃ³n, la vas a ver en esta secciÃ³n."
-          title="TodavÃ­a no hay trabajos"
+          description="Cuando un cliente seleccione tu postulación, la vas a ver en esta sección."
+          title="Todavía no hay trabajos"
         />
       ) : (
-        selectedJobs.map((job) => (
-          <ProfessionalSelectedJobCard
-            job={job}
-            key={job.applicationId}
-            onOpenChat={() => {
-              if (job.conversationId) {
-                navigateToJobConversation(job.conversationId);
-                return;
-              }
+        selectedJobs.map((job) => {
+          const openChat = () => {
+            if (job.conversationId) {
+              navigateToJobConversation(job.conversationId);
+              return;
+            }
 
-              void openJobConversationMutation.mutateAsync(job.applicationId).catch((openError) => {
-                logDevelopmentSupabaseError('professional-jobs:open-chat', openError);
-              });
-            }}
-          />
-        ))
+            void openJobConversationMutation.mutateAsync(job.applicationId).catch((openError) => {
+              logDevelopmentSupabaseError('professional-jobs:open-chat', openError);
+            });
+          };
+
+          return (
+            <ProfessionalSelectedJobCard
+              job={job}
+              key={job.applicationId}
+              onManageJob={() => {
+                console.info('[professional-jobs:navigation]', {
+                  jobId: job.jobId,
+                  requestId: job.requestId,
+                });
+
+                if (!job.jobId) {
+                  return;
+                }
+
+                router.push({
+                  pathname: '/(professional)/jobs/[jobId]',
+                  params: { jobId: job.jobId },
+                } as Href);
+              }}
+              onOpenChat={openChat}
+            />
+          );
+        })
       )}
     </Screen>
   );
@@ -536,7 +557,7 @@ export function ProfessionalProfileScreen() {
   return (
     <ProfessionalProfileEditorScreen
       mode="edit"
-      subtitle="EditÃ¡ tu perfil profesional, tus rubros y tu disponibilidad."
+      subtitle="Editá tu perfil profesional, tus rubros y tu disponibilidad."
       title="Perfil"
     />
   );
@@ -620,14 +641,14 @@ function ProfessionalProfileEditorScreen({
 
   const signOutFooter = (
     <Button onPress={() => void signOut()} variant={mode === 'onboarding' ? 'secondary' : 'danger'}>
-      Cerrar sesiÃ³n
+      Cerrar sesión
     </Button>
   );
 
   if (!profile) {
     return (
-      <Screen footer={signOutFooter} subtitle="TodavÃ­a estamos resolviendo tu sesiÃ³n." title={title}>
-        <ErrorState message="No encontramos tu perfil todavÃ­a." />
+      <Screen footer={signOutFooter} subtitle="Todavía estamos resolviendo tu sesión." title={title}>
+        <ErrorState message="No encontramos tu perfil todavía." />
       </Screen>
     );
   }
@@ -637,7 +658,7 @@ function ProfessionalProfileEditorScreen({
       {profile.role === 'professional' && mode === 'edit' ? (
         <Card>
           <Text style={styles.infoText}>
-            Si en el futuro necesitÃ¡s cambiar el tipo de cuenta, contactÃ¡ a soporte para revisarlo
+            Si en el futuro necesitás cambiar el tipo de cuenta, contactá a soporte para revisarlo
             junto con el equipo operativo.
           </Text>
         </Card>
@@ -694,10 +715,10 @@ function OpportunityFilters({
 }) {
   return (
     <Card>
-      <Text style={styles.filterTitle}>Filtros rÃ¡pidos</Text>
+      <Text style={styles.filterTitle}>Filtros rápidos</Text>
       <FilterPills
         currentValue={categoryFilter}
-        label="CategorÃ­a"
+        label="Categoría"
         onChange={onCategoryChange}
         values={categories}
       />
@@ -714,7 +735,7 @@ function OpportunityFilters({
         style={[styles.choice, onlyWithoutApplication ? styles.choiceSelected : null]}
       >
         <Text style={[styles.choiceLabel, onlyWithoutApplication ? styles.choiceLabelSelected : null]}>
-          Solo sin mi postulaciÃ³n
+          Solo sin mi postulación
         </Text>
       </Pressable>
     </Card>
@@ -779,17 +800,17 @@ function OpportunityListItem({
         <View style={styles.requestCard}>
           <Text style={styles.requestTitle}>{opportunity.title}</Text>
           <Text style={styles.requestMeta}>
-            {opportunity.categoryName ?? 'No estoy seguro del rubro'} Â· {opportunity.city}
+            {opportunity.categoryName ?? 'No estoy seguro del rubro'} · {opportunity.city}
           </Text>
           <Text style={styles.requestMeta}>
-            {getServiceRequestUrgencyLabel(opportunity.urgency)} Â· {getServiceRequestTypeLabel(opportunity.requestType)}
+            {getServiceRequestUrgencyLabel(opportunity.urgency)} · {getServiceRequestTypeLabel(opportunity.requestType)}
           </Text>
           <Text style={styles.requestMeta}>Publicada: {formatDateTime(opportunity.publishedAt)}</Text>
           {opportunity.preferredDate ? (
             <Text style={styles.requestMeta}>Fecha preferida: {opportunity.preferredDate}</Text>
           ) : null}
           {application ? (
-            <StatusBadge tone="accent" value={`PostulaciÃ³n ${getApplicationStatusLabel(application.status)}`} />
+            <StatusBadge tone="accent" value={`Postulación ${getApplicationStatusLabel(application.status)}`} />
           ) : null}
         </View>
       </Card>
@@ -804,10 +825,10 @@ function OpportunityDetailCard({ opportunity }: { opportunity: ProfessionalOppor
         <Text style={styles.requestTitle}>{opportunity.title}</Text>
         <Text style={styles.requestDescription}>{opportunity.description}</Text>
         <Text style={styles.requestMeta}>
-          CategorÃ­a: {opportunity.categoryName ?? 'No estoy seguro del rubro'}
+          Categoría: {opportunity.categoryName ?? 'No estoy seguro del rubro'}
         </Text>
         <Text style={styles.requestMeta}>
-          UbicaciÃ³n: {opportunity.city}, {opportunity.province}
+          Ubicación: {opportunity.city}, {opportunity.province}
         </Text>
         <Text style={styles.requestMeta}>Tipo: {getServiceRequestTypeLabel(opportunity.requestType)}</Text>
         <Text style={styles.requestMeta}>Urgencia: {getServiceRequestUrgencyLabel(opportunity.urgency)}</Text>
@@ -815,7 +836,7 @@ function OpportunityDetailCard({ opportunity }: { opportunity: ProfessionalOppor
           Fecha preferida: {opportunity.preferredDate ?? 'Sin fecha preferida'}
         </Text>
         <Text style={styles.requestMeta}>
-          Horario: {opportunity.preferredTimeText ?? 'Sin horario especÃ­fico'}
+          Horario: {opportunity.preferredTimeText ?? 'Sin horario específico'}
         </Text>
         <Text style={styles.requestMeta}>
           Disponibilidad: {opportunity.availabilityNotes ?? 'Sin notas adicionales'}
@@ -830,7 +851,7 @@ function ApplicationSummary({ application }: { application: ProfessionalApplicat
   return (
     <Card>
       <View style={styles.requestCard}>
-        <Text style={styles.requestTitle}>Tu postulaciÃ³n</Text>
+        <Text style={styles.requestTitle}>Tu postulación</Text>
         {application.unreadCount > 0 ? (
           <Text style={styles.unreadText}>{application.unreadCount} mensajes sin leer</Text>
         ) : null}
@@ -847,7 +868,7 @@ function ApplicationSummary({ application }: { application: ProfessionalApplicat
           Estimado: {formatPrice(application.estimatedPrice) ?? 'Sin precio estimado'}
         </Text>
         <Text style={styles.requestMeta}>
-          DuraciÃ³n: {application.estimatedDurationText ?? 'Sin duraciÃ³n estimada'}
+          Duración: {application.estimatedDurationText ?? 'Sin duración estimada'}
         </Text>
         <ConversationSummary
           lastMessageAt={application.lastMessageAt}
@@ -871,9 +892,9 @@ function ConversationSummary({
   return (
     <View style={styles.conversationSummary}>
       <View style={styles.copy}>
-        <Text style={styles.requestTitle}>Conversacion</Text>
+        <Text style={styles.requestTitle}>Conversación</Text>
         <Text numberOfLines={2} style={styles.requestMeta}>
-          {lastMessageBody ? `Ultimo mensaje: ${lastMessageBody}` : 'Todavia no hay mensajes.'}
+          {lastMessageBody ? `Último mensaje: ${lastMessageBody}` : 'Todavía no hay mensajes.'}
         </Text>
         {lastMessageAt ? <Text style={styles.requestMeta}>{formatDateTime(lastMessageAt)}</Text> : null}
       </View>
@@ -884,31 +905,45 @@ function ConversationSummary({
 
 function ProfessionalSelectedJobCard({
   job,
+  onManageJob,
   onOpenChat,
 }: {
   job: ProfessionalSelectedJob;
+  onManageJob: () => void;
   onOpenChat: () => void;
 }) {
+  const nextAction = getProfessionalJobNextAction(job.jobStatus);
+
   return (
     <Card>
       <View style={styles.requestCard}>
+        <StatusHeader
+          actionLabel={nextAction}
+          description={`${job.categoryName ?? 'Sin categoría'} · ${job.city}`}
+          status={job.jobStatus ? getMobileJobStatusLabel(job.jobStatus) : 'Profesional seleccionado'}
+          tone="success"
+        />
         <Text style={styles.requestTitle}>{job.title}</Text>
-        {job.unreadCount > 0 ? (
-          <Text style={styles.unreadText}>{job.unreadCount} mensajes sin leer</Text>
-        ) : null}
-        <Text style={styles.requestMeta}>
-          {job.categoryName ?? 'Sin categoria'} · {job.city}
-        </Text>
-        <StatusBadge tone="success" value="Profesional seleccionado" />
-        <Text style={styles.requestMeta}>Fecha de seleccion: {formatDateTime(job.selectedAt)}</Text>
+        <Text style={styles.requestMeta}>Fecha relevante: {formatDateTime(job.selectedAt)}</Text>
         <ConversationSummary
           lastMessageAt={job.lastMessageAt}
           lastMessageBody={job.lastMessageBody}
           unreadCount={job.unreadCount}
         />
-        <Button onPress={onOpenChat} variant="secondary">
-          Abrir conversacion
-        </Button>
+        <PrimaryActionBar
+          primaryAction={
+            job.jobId ? (
+              <Button onPress={onManageJob}>Gestionar trabajo</Button>
+            ) : (
+              <Text style={styles.requestMeta}>El trabajo todavía no está disponible para gestionar.</Text>
+            )
+          }
+          secondaryAction={
+            <Button onPress={onOpenChat} variant="secondary">
+              Abrir conversación
+            </Button>
+          }
+        />
       </View>
     </Card>
   );
@@ -1007,6 +1042,30 @@ function formatPrice(value: number | null): string | null {
     maximumFractionDigits: 0,
     style: 'currency',
   }).format(value);
+}
+
+function getProfessionalJobNextAction(status: ProfessionalSelectedJob['jobStatus']): string {
+  switch (status) {
+    case 'coordination_pending':
+      return 'Proponer visita';
+    case 'visit_proposed':
+      return 'Esperar confirmación';
+    case 'visit_confirmed':
+    case 'diagnosis_pending':
+      return 'Registrar diagnóstico';
+    case 'quote_pending':
+      return 'Crear presupuesto';
+    case 'quote_sent':
+      return 'Esperar respuesta';
+    case 'quote_rejected':
+      return 'Crear nueva versión';
+    case 'quote_accepted':
+      return 'Presupuesto aceptado';
+    case 'cancelled':
+      return 'Trabajo cancelado';
+    case null:
+      return 'Gestionar trabajo';
+  }
 }
 
 const styles = StyleSheet.create({

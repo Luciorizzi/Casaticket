@@ -7,6 +7,7 @@ export default function ProfessionalLayout() {
       <Tabs.Screen name="opportunities" options={{ title: 'Oportunidades' }} />
       <Tabs.Screen name="opportunities/[id]" options={{ href: null, title: 'Detalle' }} />
       <Tabs.Screen name="jobs" options={{ title: 'Mis trabajos' }} />
+      <Tabs.Screen name="jobs/[jobId]" options={{ href: null, title: 'Trabajo' }} />
       <Tabs.Screen name="profile" options={{ title: 'Perfil' }} />
     </Tabs>
   );

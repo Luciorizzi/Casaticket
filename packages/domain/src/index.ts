@@ -4,6 +4,8 @@ import type {
   ApplicationStatus,
   ConversationStatus,
   AvailabilityStatus,
+  JobQuoteStatus,
+  JobStatus,
   Profile,
   SelectableMobileRole,
   ServiceRequestStatus,
@@ -70,6 +72,26 @@ export const CONVERSATION_STATUSES = [
   'read_only',
   'closed',
 ] as const satisfies readonly ConversationStatus[];
+
+export const JOB_STATUSES = [
+  'coordination_pending',
+  'visit_proposed',
+  'visit_confirmed',
+  'diagnosis_pending',
+  'quote_pending',
+  'quote_sent',
+  'quote_accepted',
+  'quote_rejected',
+  'cancelled',
+] as const satisfies readonly JobStatus[];
+
+export const JOB_QUOTE_STATUSES = [
+  'draft',
+  'sent',
+  'accepted',
+  'rejected',
+  'superseded',
+] as const satisfies readonly JobQuoteStatus[];
 
 export function isSelectableMobileRole(role: AppRole): role is SelectableMobileRole {
   return MOBILE_SELECTABLE_ROLES.includes(role as SelectableMobileRole);
@@ -183,6 +205,44 @@ export function getConversationStatusLabel(status: ConversationStatus): string {
       return 'Solo lectura';
     case 'closed':
       return 'Cerrada';
+  }
+}
+
+export function getJobStatusLabel(status: JobStatus): string {
+  switch (status) {
+    case 'coordination_pending':
+      return 'Coordinacion pendiente';
+    case 'visit_proposed':
+      return 'Visita propuesta';
+    case 'visit_confirmed':
+      return 'Visita confirmada';
+    case 'diagnosis_pending':
+      return 'Diagnostico pendiente';
+    case 'quote_pending':
+      return 'Presupuesto pendiente';
+    case 'quote_sent':
+      return 'Presupuesto enviado';
+    case 'quote_accepted':
+      return 'Presupuesto aceptado';
+    case 'quote_rejected':
+      return 'Presupuesto rechazado';
+    case 'cancelled':
+      return 'Cancelado';
+  }
+}
+
+export function getJobQuoteStatusLabel(status: JobQuoteStatus): string {
+  switch (status) {
+    case 'draft':
+      return 'Borrador';
+    case 'sent':
+      return 'Enviado';
+    case 'accepted':
+      return 'Aceptado';
+    case 'rejected':
+      return 'Rechazado';
+    case 'superseded':
+      return 'Reemplazado';
   }
 }
 

@@ -1,12 +1,11 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { router, type Href } from 'expo-router';
+import { router, type Href, useRouter } from 'expo-router';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
   getApplicationProposalTypeLabel,
   getProfileDisplayName,
-  getServiceRequestStatusLabel,
   getServiceRequestTypeLabel,
   getServiceRequestUrgencyLabel,
 } from '@casaticket/domain';
@@ -25,6 +24,15 @@ import { ErrorState } from '@/components/ui/error-state';
 import { LoadingState } from '@/components/ui/loading-state';
 import { Screen } from '@/components/ui/screen';
 import { getVerificationLabel, StatusBadge } from '@/components/ui/status-badge';
+import {
+  InfoRow,
+  PrimaryActionBar,
+  ProcessTimeline,
+  ScreenHeader,
+  SectionCard,
+  StatusHeader,
+  SummaryCard,
+} from '@/components/ui/workflow';
 import { ensureApplicationConversation } from '@/features/applications/chat-api';
 import { useAuthSession } from '@/features/auth/auth-provider';
 import { listActiveCategories } from '@/features/categories/api';
@@ -39,6 +47,8 @@ import {
   markCustomerApplicationViewed,
   selectProfessionalForRequest,
 } from '@/features/customer/service-requests-api';
+import { CustomerJobSummaryPanel } from '@/features/jobs/customer-job-panel';
+import { getMobileServiceRequestStatusLabel } from '@/features/jobs/status-labels';
 import { resolveAppRoute } from '@/features/navigation/access';
 import { fetchOwnDefaultAddress, saveCustomerOnboarding } from '@/features/profile/api';
 import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
@@ -232,7 +242,6 @@ export function CustomerRequestsScreen() {
 export function CustomerRequestDetailScreen({ requestId }: { requestId: string }) {
   const queryClient = useQueryClient();
   const { sessionState } = useAuthSession();
-  const [expandedApplicationId, setExpandedApplicationId] = useState<string | null>(null);
   const requestQuery = useQuery({
     queryKey:
       sessionState.status === 'authenticated'
@@ -285,39 +294,6 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
               : application,
           ),
       );
-    },
-  });
-  const selectMutation = useMutation({
-    mutationFn: (application: CustomerRequestApplication) =>
-      selectProfessionalForRequest(requestId, application.id),
-    onSuccess: (selection) => {
-      if (sessionState.status !== 'authenticated') {
-        return;
-      }
-
-      syncSelectionCache({
-        queryClient,
-        request: requestQuery.data ?? null,
-        selection,
-        userId: sessionState.user.id,
-      });
-
-      if (process.env.NODE_ENV !== 'production') {
-        console.info('[customer-applications] professional selected', {
-          requestId: selection.requestId,
-          selectedApplicationId: selection.selectedApplicationId,
-          selectedProfessionalId: selection.selectedProfessionalId,
-          requestStatus: selection.requestStatus,
-          requestCacheUpdated: Boolean(
-            queryClient.getQueryData(queryKeys.serviceRequest(sessionState.user.id, selection.requestId)),
-          ),
-          applicationsCacheUpdated: Boolean(
-            queryClient.getQueryData(
-              queryKeys.customerRequestApplications(sessionState.user.id, selection.requestId),
-            ),
-          ),
-        });
-      }
     },
   });
   const openConversationMutation = useMutation({
@@ -385,6 +361,7 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
 
   const request = requestQuery.data;
   const applications = applicationsQuery.data ?? [];
+  const selectedApplication = applications.find((application) => application.status === 'selected') ?? null;
   const confirmCancel = () => {
     Alert.alert(
       'Cancelar solicitud',
@@ -402,7 +379,7 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
 
   return (
     <Screen subtitle="Detalle de la solicitud publicada." title={request.title}>
-      <ServiceRequestDetailCard request={request} />
+      <ServiceRequestDetailCard applications={applications} request={request} />
       {request.status === 'published' ? (
         <Button disabled={cancelMutation.isPending} onPress={confirmCancel} variant="danger">
           {cancelMutation.isPending ? 'Cancelando...' : 'Cancelar solicitud'}
@@ -411,31 +388,24 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
       {cancelMutation.error ? (
         <ErrorState message="No pudimos cancelar la solicitud." title="Cancelación fallida" />
       ) : null}
-      {selectMutation.error ? (
-        <ErrorState message="No pudimos seleccionar este profesional." title="Selección fallida" />
-      ) : null}
       {openConversationMutation.error ? (
         <ErrorState message="No pudimos abrir la conversacion." title="Chat no disponible" />
       ) : null}
       <CustomerApplicationsSection
         applications={applications}
-        expandedApplicationId={expandedApplicationId}
-        loadingApplicationId={selectMutation.variables?.id ?? null}
-        markingViewed={markViewedMutation.isPending}
         onOpenApplication={(application) => {
-          setExpandedApplicationId((currentId) =>
-            currentId === application.id ? null : application.id,
-          );
-
           if (application.status === 'submitted') {
             void markViewedMutation.mutateAsync(application.id).catch((error) => {
               logDevelopmentSupabaseError('customer-applications:mark-viewed-screen', error);
             });
           }
+
+          router.push({
+            pathname: '/(customer)/requests/[id]/applications/[applicationId]',
+            params: { applicationId: application.id, id: request.id },
+          } as Href);
         }}
         onOpenChat={(application) => {
-          setExpandedApplicationId(application.id);
-
           if (application.conversationId) {
             navigateToConversation(application.conversationId);
             return;
@@ -445,21 +415,324 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
             logDevelopmentSupabaseError('customer-applications:open-chat', error);
           });
         }}
-        onSelectApplication={(application) => {
-          Alert.alert(
-            '¿Querés elegir a este profesional?',
-            'La selección no se podrá cambiar libremente. Las demás propuestas serán rechazadas. Todavía no se habilitan pagos ni chat en esta fase.',
-            [
-              { style: 'cancel', text: 'Volver' },
-              {
-                onPress: () => void selectMutation.mutateAsync(application),
-                text: 'Seleccionar profesional',
-              },
-            ],
-          );
-        }}
-        request={request}
-        selecting={selectMutation.isPending}
+      />
+      {request.status === 'professional_selected' && selectedApplication ? (
+        <CustomerJobSummaryPanel requestId={request.id} />
+      ) : null}
+    </Screen>
+  );
+}
+
+export function CustomerRequestDetailsScreen({ requestId }: { requestId: string }) {
+  const detailRouter = useRouter();
+  const { sessionState } = useAuthSession();
+  const backAction = <CustomerRequestBackButton requestId={requestId} router={detailRouter} />;
+  const requestQuery = useQuery({
+    queryKey:
+      sessionState.status === 'authenticated'
+        ? queryKeys.serviceRequest(sessionState.user.id, requestId)
+        : ['service-request', requestId],
+    queryFn: () => getOwnServiceRequest(requestId),
+    enabled: sessionState.status === 'authenticated' && requestId.length > 0,
+  });
+
+  if (requestQuery.isPending) {
+    return (
+      <Screen scroll={false}>
+        <ScreenHeader backAction={backAction} subtitle="Información completa de la solicitud." title="Detalles" />
+        <LoadingState message="Cargando solicitud..." />
+      </Screen>
+    );
+  }
+
+  if (sessionState.status !== 'authenticated') {
+    return (
+      <Screen>
+        <ScreenHeader backAction={backAction} subtitle="Información completa de la solicitud." title="Detalles" />
+        <ErrorState message="No encontramos una sesión activa." />
+      </Screen>
+    );
+  }
+
+  if (requestQuery.error || !requestQuery.data) {
+    return (
+      <Screen>
+        <ScreenHeader backAction={backAction} subtitle="Información completa de la solicitud." title="Detalles" />
+        <ErrorState message="No pudimos abrir esta solicitud." onRetry={() => void requestQuery.refetch()} />
+      </Screen>
+    );
+  }
+
+  const request = requestQuery.data;
+
+  return (
+    <Screen>
+      <ScreenHeader backAction={backAction} subtitle="Información completa de la solicitud." title={request.title} />
+      <SectionCard title="Solicitud">
+        <InfoRow label="Descripción" value={request.description} />
+        <InfoRow label="Categoría" value={request.category?.name ?? 'Sin categoría'} />
+        <InfoRow label="Tipo" value={getServiceRequestTypeLabel(request.requestType)} />
+        <InfoRow label="Urgencia" value={getServiceRequestUrgencyLabel(request.urgency)} />
+      </SectionCard>
+      <SectionCard title="Ubicación">
+        <InfoRow label="Dirección" value={request.addressText} />
+        <InfoRow label="Ciudad" value={request.city} />
+        <InfoRow label="Provincia" value={request.province} />
+      </SectionCard>
+      <SectionCard title="Preferencias">
+        <InfoRow label="Fecha preferida" value={request.preferredDate ?? 'Sin fecha preferida'} />
+        <InfoRow label="Horario" value={request.preferredTimeText ?? 'Sin horario específico'} />
+        <InfoRow label="Disponibilidad" value={request.availabilityNotes ?? 'Sin notas adicionales'} />
+      </SectionCard>
+      <SectionCard title="Estado">
+        <InfoRow label="Publicación" value={formatDateTime(request.publishedAt)} />
+        <InfoRow label="Estado" value={getMobileServiceRequestStatusLabel(request.status)} />
+      </SectionCard>
+    </Screen>
+  );
+}
+
+export function CustomerApplicationDetailScreen({
+  applicationId,
+  requestId,
+}: {
+  applicationId: string;
+  requestId: string;
+}) {
+  const detailRouter = useRouter();
+  const queryClient = useQueryClient();
+  const { sessionState } = useAuthSession();
+  const backAction = <CustomerRequestBackButton requestId={requestId} router={detailRouter} />;
+  const requestQuery = useQuery({
+    queryKey:
+      sessionState.status === 'authenticated'
+        ? queryKeys.serviceRequest(sessionState.user.id, requestId)
+        : ['service-request', requestId],
+    queryFn: () => getOwnServiceRequest(requestId),
+    enabled: sessionState.status === 'authenticated' && requestId.length > 0,
+  });
+  const applicationsQuery = useQuery({
+    queryKey:
+      sessionState.status === 'authenticated'
+        ? queryKeys.customerRequestApplications(sessionState.user.id, requestId)
+        : ['customer-request-applications', requestId],
+    queryFn: () => listCustomerRequestApplications(requestId),
+    enabled: sessionState.status === 'authenticated' && requestId.length > 0,
+  });
+  const markViewedMutation = useMutation({
+    mutationFn: markCustomerApplicationViewed,
+    onSuccess: (viewedApplication) => {
+      if (sessionState.status !== 'authenticated') {
+        return;
+      }
+
+      queryClient.setQueryData<CustomerRequestApplication[]>(
+        queryKeys.customerRequestApplications(sessionState.user.id, requestId),
+        (currentApplications = []) =>
+          currentApplications.map((application) =>
+            application.id === viewedApplication.application_id
+              ? { ...application, status: viewedApplication.status }
+              : application,
+          ),
+      );
+    },
+  });
+  const selectMutation = useMutation({
+    mutationFn: (application: CustomerRequestApplication) =>
+      selectProfessionalForRequest(requestId, application.id),
+    onSuccess: (selection) => {
+      if (sessionState.status !== 'authenticated') {
+        return;
+      }
+
+      syncSelectionCache({
+        queryClient,
+        request: requestQuery.data ?? null,
+        selection,
+        userId: sessionState.user.id,
+      });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.job(selection.requestId) });
+      void queryClient.invalidateQueries({ queryKey: ['customer-job', selection.requestId] });
+
+      if (process.env.NODE_ENV !== 'production') {
+        console.info('[customer-applications] professional selected', {
+          requestId: selection.requestId,
+          selectedApplicationId: selection.selectedApplicationId,
+          selectedProfessionalId: selection.selectedProfessionalId,
+          requestStatus: selection.requestStatus,
+          requestCacheUpdated: Boolean(
+            queryClient.getQueryData(queryKeys.serviceRequest(sessionState.user.id, selection.requestId)),
+          ),
+          applicationsCacheUpdated: Boolean(
+            queryClient.getQueryData(
+              queryKeys.customerRequestApplications(sessionState.user.id, selection.requestId),
+            ),
+          ),
+        });
+      }
+
+      router.replace({
+        pathname: '/(customer)/requests/[id]',
+        params: { id: selection.requestId },
+      } as Href);
+    },
+  });
+  const openConversationMutation = useMutation({
+    mutationFn: ensureApplicationConversation,
+    onSuccess: (conversation, selectedApplicationId) => {
+      if (sessionState.status !== 'authenticated') {
+        return;
+      }
+
+      queryClient.setQueryData(queryKeys.applicationConversation(selectedApplicationId), conversation);
+      updateCustomerApplicationChatCache({
+        applicationId: selectedApplicationId,
+        patch: { conversationId: conversation.id, unreadCount: conversation.unreadCount },
+        queryClient,
+        requestId,
+        userId: sessionState.user.id,
+      });
+      router.push({
+        pathname: '/chat/[conversationId]',
+        params: { conversationId: conversation.id },
+      } as Href);
+    },
+  });
+  const request = requestQuery.data ?? null;
+  const applications = applicationsQuery.data ?? [];
+  const application = applications.find((currentApplication) => currentApplication.id === applicationId) ?? null;
+  const canSelect =
+    request &&
+    ['published', 'receiving_applications'].includes(request.status) &&
+    application &&
+    ['submitted', 'viewed'].includes(application.status);
+
+  useEffect(() => {
+    if (application?.status !== 'submitted') {
+      return;
+    }
+
+    void markViewedMutation.mutateAsync(application.id).catch((error) => {
+      logDevelopmentSupabaseError('customer-applications:mark-viewed-detail', error);
+    });
+  }, [application?.id, application?.status, markViewedMutation]);
+
+  if (requestQuery.isPending || applicationsQuery.isPending) {
+    return (
+      <Screen scroll={false}>
+        <ScreenHeader backAction={backAction} subtitle="Perfil y propuesta recibida." title="Propuesta" />
+        <LoadingState message="Cargando propuesta..." />
+      </Screen>
+    );
+  }
+
+  if (sessionState.status !== 'authenticated') {
+    return (
+      <Screen>
+        <ScreenHeader backAction={backAction} subtitle="Perfil y propuesta recibida." title="Propuesta" />
+        <ErrorState message="No encontramos una sesión activa." />
+      </Screen>
+    );
+  }
+
+  if (requestQuery.error || applicationsQuery.error || !request || !application) {
+    return (
+      <Screen>
+        <ScreenHeader backAction={backAction} subtitle="Perfil y propuesta recibida." title="Propuesta" />
+        <ErrorState
+          message="No pudimos abrir esta propuesta."
+          onRetry={() => {
+            void requestQuery.refetch();
+            void applicationsQuery.refetch();
+          }}
+        />
+      </Screen>
+    );
+  }
+
+  return (
+    <Screen>
+      <ScreenHeader
+        backAction={backAction}
+        subtitle={request.title}
+        title={getProfessionalDisplayName(application)}
+      />
+      {selectMutation.error ? (
+        <ErrorState message="No pudimos seleccionar este profesional." title="Selección fallida" />
+      ) : null}
+      {openConversationMutation.error ? (
+        <ErrorState message="No pudimos abrir la conversación." title="Chat no disponible" />
+      ) : null}
+      <SectionCard title="Perfil">
+        <InfoRow label="Nombre" value={getProfessionalDisplayName(application)} />
+        <InfoRow
+          label="Rubro principal"
+          value={application.professionalCategoryNames[0] ?? 'Sin rubro principal'}
+        />
+        <InfoRow
+          label="Experiencia"
+          value={`${application.professionalYearsExperience ?? 0} años`}
+        />
+        <InfoRow
+          label="Verificación"
+          value={getVerificationLabel(application.professionalVerificationStatus)}
+        />
+        <InfoRow label="Bio" value={application.professionalBio ?? 'Este profesional todavía no cargó una bio.'} />
+      </SectionCard>
+      <SectionCard title="Propuesta">
+        <InfoRow label="Tipo" value={getApplicationProposalTypeLabel(application.proposalType)} />
+        <InfoRow label="Mensaje" value={application.message} />
+        <InfoRow label="Disponibilidad" value={application.availabilityText} />
+        <InfoRow label="Visita" value={formatPrice(application.visitPrice) ?? 'Sin precio de visita'} />
+        <InfoRow label="Estimado" value={formatPrice(application.estimatedPrice) ?? 'Sin precio estimado'} />
+        <InfoRow label="Duración" value={application.estimatedDurationText ?? 'Sin duración estimada'} />
+        <InfoRow label="Postulación" value={formatDateTime(application.createdAt)} />
+      </SectionCard>
+      <ConversationSummary
+        lastMessageAt={application.lastMessageAt}
+        lastMessageBody={application.lastMessageBody}
+        unreadCount={application.unreadCount}
+      />
+      <PrimaryActionBar
+        primaryAction={
+          canSelect ? (
+            <Button disabled={selectMutation.isPending} onPress={() => {
+              Alert.alert(
+                '¿Querés elegir a este profesional?',
+                'La selección no se podrá cambiar libremente. Las demás propuestas serán rechazadas.',
+                [
+                  { style: 'cancel', text: 'Volver' },
+                  {
+                    onPress: () => void selectMutation.mutateAsync(application),
+                    text: 'Seleccionar profesional',
+                  },
+                ],
+              );
+            }}>
+              {selectMutation.isPending ? 'Seleccionando...' : 'Seleccionar profesional'}
+            </Button>
+          ) : null
+        }
+        secondaryAction={
+          <Button
+            onPress={() => {
+              if (application.conversationId) {
+                router.push({
+                  pathname: '/chat/[conversationId]',
+                  params: { conversationId: application.conversationId },
+                } as Href);
+                return;
+              }
+
+              void openConversationMutation.mutateAsync(application.id).catch((error) => {
+                logDevelopmentSupabaseError('customer-applications:open-chat-detail', error);
+              });
+            }}
+            variant="secondary"
+          >
+            Abrir conversación
+          </Button>
+        }
       />
     </Screen>
   );
@@ -587,139 +860,119 @@ function CustomerProfileEditorScreen({
 function ServiceRequestListItem({ request }: { request: ServiceRequestWithCategory }) {
   return (
     <Pressable onPress={() => router.push(`/(customer)/requests/${request.id}` as Href)}>
-      <Card>
-        <View style={styles.requestCard}>
-          <Text style={styles.requestTitle}>{request.title}</Text>
-          <Text style={styles.requestMeta}>
-            {request.category?.name ?? 'Sin categoría'} · {getServiceRequestStatusLabel(request.status)}
-          </Text>
-          <Text style={styles.requestMeta}>
-            {request.city} · {getServiceRequestUrgencyLabel(request.urgency)}
-          </Text>
-          <Text style={styles.requestMeta}>Publicada: {formatDateTime(request.publishedAt)}</Text>
-        </View>
-      </Card>
+      <SummaryCard
+        icon="🏠"
+        secondaryText={`${request.category?.name ?? 'Sin categoría'} · ${request.city} · ${formatDateTime(request.publishedAt)}`}
+        title={getMobileServiceRequestStatusLabel(request.status)}
+        value={request.title}
+      />
     </Pressable>
   );
 }
 
-function ServiceRequestDetailCard({ request }: { request: ServiceRequestWithCategory }) {
+function ServiceRequestDetailCard({
+  applications,
+  request,
+}: {
+  applications: CustomerRequestApplication[];
+  request: ServiceRequestWithCategory;
+}) {
+  const selectedApplication = applications.find((application) => application.status === 'selected') ?? null;
+  const timelineStep = request.status === 'professional_selected' ? 'selected' : 'published';
+
   return (
-    <Card>
-      <View style={styles.requestCard}>
-        <Text style={styles.requestTitle}>{request.title}</Text>
-        <Text style={styles.requestDescription}>{request.description}</Text>
-        <Text style={styles.requestMeta}>Categoría: {request.category?.name ?? 'Sin categoría'}</Text>
-        <Text style={styles.requestMeta}>Tipo: {getServiceRequestTypeLabel(request.requestType)}</Text>
-        <Text style={styles.requestMeta}>Urgencia: {getServiceRequestUrgencyLabel(request.urgency)}</Text>
-        <Text style={styles.requestMeta}>
-          Dirección: {request.addressText}, {request.city}, {request.province}
-        </Text>
-        <Text style={styles.requestMeta}>
-          Fecha preferida: {request.preferredDate ?? 'Sin fecha preferida'}
-        </Text>
-        <Text style={styles.requestMeta}>
-          Horario: {request.preferredTimeText ?? 'Sin horario específico'}
-        </Text>
-        <Text style={styles.requestMeta}>
-          Disponibilidad: {request.availabilityNotes ?? 'Sin notas adicionales'}
-        </Text>
-        <Text style={styles.requestMeta}>Estado: {getServiceRequestStatusLabel(request.status)}</Text>
-        <Text style={styles.requestMeta}>Publicada: {formatDateTime(request.publishedAt)}</Text>
-      </View>
-    </Card>
+    <SectionCard title={request.title}>
+      <StatusHeader
+        actionLabel={
+          request.status === 'professional_selected'
+            ? 'Coordinar el trabajo'
+            : applications.length > 0
+              ? 'Revisar postulaciones'
+              : 'Esperar postulaciones'
+        }
+        description={
+          selectedApplication
+            ? `Profesional seleccionado: ${getProfessionalDisplayName(selectedApplication)}`
+            : 'Solicitud publicada'
+        }
+        status={getMobileServiceRequestStatusLabel(request.status)}
+        tone={request.status === 'professional_selected' ? 'success' : 'accent'}
+      />
+      <ProcessTimeline
+        currentStep={timelineStep}
+        steps={[
+          { key: 'published', label: 'Solicitud' },
+          { key: 'selected', label: 'Profesional' },
+          { key: 'visit', label: 'Visita' },
+          { key: 'diagnosis', label: 'Diagnóstico' },
+          { key: 'quote', label: 'Presupuesto' },
+        ]}
+      />
+      <Button
+        onPress={() =>
+          router.push({
+            pathname: '/(customer)/requests/[id]/details',
+            params: { id: request.id },
+          } as Href)
+        }
+        variant="secondary"
+      >
+        Ver detalles de la solicitud
+      </Button>
+    </SectionCard>
   );
 }
 
 function CustomerApplicationsSection({
   applications,
-  expandedApplicationId,
-  loadingApplicationId,
-  markingViewed,
   onOpenApplication,
   onOpenChat,
-  onSelectApplication,
-  request,
-  selecting,
 }: {
   applications: CustomerRequestApplication[];
-  expandedApplicationId: string | null;
-  loadingApplicationId: string | null;
-  markingViewed: boolean;
   onOpenApplication: (application: CustomerRequestApplication) => void;
   onOpenChat: (application: CustomerRequestApplication) => void;
-  onSelectApplication: (application: CustomerRequestApplication) => void;
-  request: ServiceRequestWithCategory;
-  selecting: boolean;
 }) {
   const selectedApplication = applications.find((application) => application.status === 'selected') ?? null;
+  const visibleApplications = selectedApplication ? [selectedApplication] : applications;
+  const title = selectedApplication ? 'Profesional seleccionado' : 'Profesionales interesados';
 
   return (
-    <Card>
-      <View style={styles.requestCard}>
-        <Text style={styles.requestTitle}>Profesionales interesados</Text>
+    <SectionCard title={title}>
+      {!selectedApplication ? (
         <Text style={styles.requestMeta}>
           {applications.length === 1
-            ? '1 postulacion recibida'
+            ? '1 postulación recibida'
             : `${applications.length} postulaciones recibidas`}
         </Text>
-        {selectedApplication ? (
-          <StatusBadge
-            tone="success"
-            value={`Profesional seleccionado: ${getProfessionalDisplayName(selectedApplication)}`}
-          />
-        ) : null}
+      ) : null}
         {applications.length === 0 ? (
           <EmptyState
-            description="Cuando un profesional compatible se postule, vas a ver su propuesta aca."
-            title="Sin postulaciones todavia"
+            description="Cuando un profesional compatible se postule, vas a ver su propuesta acá."
+            title="Sin postulaciones todavía"
           />
         ) : (
-          applications.map((application) => (
+          visibleApplications.map((application) => (
             <CustomerApplicationCard
               application={application}
-              expanded={expandedApplicationId === application.id}
               key={application.id}
-              loading={selecting && loadingApplicationId === application.id}
-              markingViewed={markingViewed && expandedApplicationId === application.id}
               onOpen={() => onOpenApplication(application)}
               onOpenChat={() => onOpenChat(application)}
-              onSelect={() => onSelectApplication(application)}
-              request={request}
-              selecting={selecting}
             />
           ))
         )}
-      </View>
-    </Card>
+    </SectionCard>
   );
 }
 
 function CustomerApplicationCard({
   application,
-  expanded,
-  loading,
-  markingViewed,
   onOpen,
   onOpenChat,
-  onSelect,
-  request,
-  selecting,
 }: {
   application: CustomerRequestApplication;
-  expanded: boolean;
-  loading: boolean;
-  markingViewed: boolean;
   onOpen: () => void;
   onOpenChat: () => void;
-  onSelect: () => void;
-  request: ServiceRequestWithCategory;
-  selecting: boolean;
 }) {
-  const canSelect =
-    ['published', 'receiving_applications'].includes(request.status) &&
-    ['submitted', 'viewed'].includes(application.status);
-
   return (
     <View style={styles.applicationCard}>
       <Pressable onPress={onOpen} style={styles.applicationHeader}>
@@ -729,59 +982,34 @@ function CustomerApplicationCard({
             <Text style={styles.unreadText}>{application.unreadCount} mensajes sin leer</Text>
           ) : null}
           <Text style={styles.requestMeta}>
-            {application.professionalCategoryNames.join(', ') || 'Sin rubros cargados'} ·{' '}
-            {application.professionalYearsExperience ?? 0} anos de experiencia
+            {application.professionalCategoryNames[0] ?? 'Sin rubro principal'} ·{' '}
+            {application.professionalYearsExperience ?? 0} años de experiencia
           </Text>
           <Text style={styles.requestMeta}>
-            {application.professionalBaseCity} · Radio {application.professionalServiceRadiusKm} km
+            Verificación: {getVerificationLabel(application.professionalVerificationStatus)}
           </Text>
         </View>
         <StatusBadge tone={getApplicationStatusTone(application.status)} value={getCustomerApplicationStatusLabel(application.status)} />
       </Pressable>
 
-      <Text style={styles.requestDescription}>{application.message}</Text>
-      <Text style={styles.requestMeta}>Disponibilidad: {application.availabilityText}</Text>
-      <Text style={styles.requestMeta}>
-        Propuesta: {getApplicationProposalTypeLabel(application.proposalType)}
-      </Text>
-      <Text style={styles.requestMeta}>
-        Visita: {formatPrice(application.visitPrice) ?? 'Sin precio de visita'} · Estimado:{' '}
-        {formatPrice(application.estimatedPrice) ?? 'Sin precio estimado'}
-      </Text>
-      <Text style={styles.requestMeta}>
-        Duracion: {application.estimatedDurationText ?? 'Sin duracion estimada'}
-      </Text>
-      <Text style={styles.requestMeta}>Postulacion: {formatDateTime(application.createdAt)}</Text>
+      <ConversationSummary
+        lastMessageAt={application.lastMessageAt}
+        lastMessageBody={application.lastMessageBody}
+        unreadCount={application.unreadCount}
+      />
 
-      {expanded ? (
-        <View style={styles.applicationDetails}>
-          <Text style={styles.requestTitle}>Perfil publico</Text>
-          <Text style={styles.requestMeta}>
-            Verificacion: {getVerificationLabel(application.professionalVerificationStatus)}
-          </Text>
-          <Text style={styles.requestDescription}>
-            {application.professionalBio ?? 'Este profesional todavia no cargo una bio.'}
-          </Text>
-          <ConversationSummary
-            lastMessageAt={application.lastMessageAt}
-            lastMessageBody={application.lastMessageBody}
-            unreadCount={application.unreadCount}
-          />
-          {markingViewed ? <Text style={styles.requestMeta}>Marcando como vista...</Text> : null}
-          <Button onPress={onOpenChat} variant="secondary">
-            Abrir conversacion
+      <PrimaryActionBar
+        primaryAction={
+          <Button onPress={onOpen} variant="secondary">
+            Ver perfil y propuesta
           </Button>
-          {canSelect ? (
-            <Button disabled={selecting} onPress={onSelect}>
-              {loading ? 'Seleccionando...' : 'Seleccionar profesional'}
-            </Button>
-          ) : null}
-        </View>
-      ) : (
-        <Button onPress={onOpen} variant="secondary">
-          Ver perfil y propuesta
-        </Button>
-      )}
+        }
+        secondaryAction={
+          <Button onPress={onOpenChat} variant="secondary">
+            Abrir conversación
+          </Button>
+        }
+      />
     </View>
   );
 }
@@ -798,14 +1026,46 @@ function ConversationSummary({
   return (
     <View style={styles.conversationSummary}>
       <View style={styles.copy}>
-        <Text style={styles.requestTitle}>Conversacion</Text>
+        <Text style={styles.requestTitle}>Conversación</Text>
         <Text numberOfLines={2} style={styles.requestMeta}>
-          {lastMessageBody ? `Ultimo mensaje: ${lastMessageBody}` : 'Todavia no hay mensajes.'}
+          {lastMessageBody ? `Último mensaje: ${lastMessageBody}` : 'Todavía no hay mensajes.'}
         </Text>
         {lastMessageAt ? <Text style={styles.requestMeta}>{formatDateTime(lastMessageAt)}</Text> : null}
       </View>
       {unreadCount > 0 ? <Text style={styles.unreadBadge}>{unreadCount}</Text> : null}
     </View>
+  );
+}
+
+type DetailRouter = ReturnType<typeof useRouter>;
+
+function CustomerRequestBackButton({
+  requestId,
+  router: detailRouter,
+}: {
+  requestId: string;
+  router: DetailRouter;
+}) {
+  const handleBack = () => {
+    if (detailRouter.canGoBack()) {
+      detailRouter.back();
+      return;
+    }
+
+    if (!requestId) {
+      return;
+    }
+
+    detailRouter.replace({
+      pathname: '/(customer)/requests/[id]',
+      params: { id: requestId },
+    } as Href);
+  };
+
+  return (
+    <Button onPress={handleBack} variant="ghost">
+      Volver
+    </Button>
   );
 }
 

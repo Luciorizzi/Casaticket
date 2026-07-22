@@ -54,6 +54,13 @@ jest.mock('@/features/applications/chat-api', () => ({
   ensureApplicationConversation: jest.fn(),
 }));
 
+jest.mock('@/features/applications/job-panel', () => ({
+  JobPanel: () => null,
+}));
+jest.mock('@/features/jobs/customer-job-panel', () => ({
+  CustomerJobPanel: () => null,
+}));
+
 jest.mock('@/features/profile/api', () => ({
   fetchOwnDefaultAddress: () => mockFetchOwnDefaultAddress(),
   saveCustomerOnboarding: (...args: unknown[]) => mockSaveCustomerOnboarding(...args),

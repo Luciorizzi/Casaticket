@@ -73,6 +73,13 @@ jest.mock('@/features/applications/chat-api', () => ({
   ensureApplicationConversation: (...args: unknown[]) => mockEnsureApplicationConversation(...args),
 }));
 
+jest.mock('@/features/applications/job-panel', () => ({
+  JobPanel: () => null,
+}));
+jest.mock('@/features/jobs/customer-job-panel', () => ({
+  CustomerJobPanel: () => null,
+}));
+
 jest.mock('@/features/professional/application-form', () => {
   const React = jest.requireActual('react');
   const { Pressable, Text } = jest.requireActual('react-native');
@@ -196,6 +203,8 @@ function createSelectedJob(overrides: Partial<ProfessionalSelectedJob> = {}): Pr
     unreadCount: 0,
     lastMessageBody: null,
     lastMessageAt: null,
+    jobId: 'job-1',
+    jobStatus: 'coordination_pending',
     ...overrides,
   };
 }
@@ -343,18 +352,18 @@ describe('professional opportunities screens', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Abrir conversacion')).toBeTruthy();
+      expect(screen.getByText('Abrir conversación')).toBeTruthy();
     });
 
-    fireEvent.press(screen.getByText('Abrir conversacion'));
+    fireEvent.press(screen.getByText('Abrir conversación'));
 
     expect(mockPush).toHaveBeenCalledWith({
       pathname: '/chat/[conversationId]',
       params: { conversationId: 'conversation-1' },
     });
-    expect(screen.getByText('Abrir conversacion')).toBeTruthy();
+    expect(screen.getByText('Abrir conversación')).toBeTruthy();
 
-    fireEvent.press(screen.getByText('Abrir conversacion'));
+    fireEvent.press(screen.getByText('Abrir conversación'));
 
     expect(mockPush).toHaveBeenCalledTimes(2);
     expect(mockEnsureApplicationConversation).not.toHaveBeenCalled();
@@ -374,7 +383,42 @@ describe('professional opportunities screens', () => {
     });
 
     expect(mockListProfessionalSelectedJobs).toHaveBeenCalledWith('professional-1');
-    expect(screen.getByText('Profesional seleccionado')).toBeTruthy();
+    expect(screen.getByText('Coordinando visita')).toBeTruthy();
+    expect(screen.getByText('Gestionar trabajo')).toBeTruthy();
+  });
+
+  it('opens the selected professional job detail', async () => {
+    mockListProfessionalSelectedJobs.mockResolvedValue([createSelectedJob()]);
+
+    renderWithQueryClient(<ProfessionalJobsScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Gestionar trabajo')).toBeTruthy();
+    });
+
+    fireEvent.press(screen.getByText('Gestionar trabajo'));
+
+    expect(mockPush).toHaveBeenCalledWith({
+      pathname: '/(professional)/jobs/[jobId]',
+      params: { jobId: 'job-1' },
+    });
+  });
+
+  it('does not navigate to job detail when job id is missing', async () => {
+    mockListProfessionalSelectedJobs.mockResolvedValue([createSelectedJob({ jobId: null })]);
+
+    renderWithQueryClient(<ProfessionalJobsScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByText('El trabajo todavía no está disponible para gestionar.')).toBeTruthy();
+    });
+
+    expect(screen.queryByText('Gestionar trabajo')).toBeNull();
+    expect(mockPush).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        pathname: '/(professional)/jobs/[jobId]',
+      }),
+    );
   });
 
   it('opens the dedicated chat from selected jobs', async () => {
@@ -384,18 +428,18 @@ describe('professional opportunities screens', () => {
     const queryClient = renderWithQueryClient(<ProfessionalJobsScreen />);
 
     await waitFor(() => {
-      expect(screen.getByText('Abrir conversacion')).toBeTruthy();
+      expect(screen.getByText('Abrir conversación')).toBeTruthy();
     });
 
-    fireEvent.press(screen.getByText('Abrir conversacion'));
+    fireEvent.press(screen.getByText('Abrir conversación'));
 
     expect(mockPush).toHaveBeenCalledWith({
       pathname: '/chat/[conversationId]',
       params: { conversationId: 'conversation-1' },
     });
-    expect(screen.getByText('Abrir conversacion')).toBeTruthy();
+    expect(screen.getByText('Abrir conversación')).toBeTruthy();
 
-    fireEvent.press(screen.getByText('Abrir conversacion'));
+    fireEvent.press(screen.getByText('Abrir conversación'));
 
     expect(mockPush).toHaveBeenCalledTimes(2);
     expect(mockEnsureApplicationConversation).not.toHaveBeenCalled();

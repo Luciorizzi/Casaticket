@@ -204,6 +204,68 @@ export const createMessageSchema = z.object({
     .max(2000, 'El mensaje no puede superar 2000 caracteres.'),
 });
 
+export const proposeJobVisitSchema = z.object({
+  scheduledDate: optionalDateString,
+  scheduledTimeText: requiredText('El horario', 2, 120),
+  schedulingNotes: optionalShortText(500, 'Las notas de coordinacion son demasiado largas.'),
+});
+
+export const recordJobDiagnosisSchema = z.object({
+  diagnosisText: z
+    .string({
+      required_error: 'El diagnostico es obligatorio.',
+      invalid_type_error: 'El diagnostico es obligatorio.',
+    })
+    .trim()
+    .min(20, 'El diagnostico debe tener al menos 20 caracteres.')
+    .max(3000, 'El diagnostico no puede superar 3000 caracteres.'),
+  recommendedWorkText: z
+    .string({
+      invalid_type_error: 'El trabajo recomendado debe ser texto.',
+    })
+    .trim()
+    .min(10, 'El trabajo recomendado debe tener al menos 10 caracteres.')
+    .max(3000, 'El trabajo recomendado no puede superar 3000 caracteres.')
+    .optional(),
+  materialsNotes: optionalShortText(1000, 'Los materiales u observaciones son demasiado largos.').optional(),
+  diagnosisNotes: optionalShortText(1000, 'Las notas del diagnostico son demasiado largas.').optional(),
+});
+
+const requiredNonNegativeNumber = (fieldLabel: string) =>
+  z
+    .number({
+      required_error: `${fieldLabel} es obligatorio.`,
+      invalid_type_error: `Ingresa un importe valido para ${fieldLabel.toLowerCase()}.`,
+    })
+    .min(0, 'El importe no puede ser negativo.');
+
+export const createJobQuoteSchema = z
+  .object({
+    laborAmount: requiredNonNegativeNumber('La mano de obra'),
+    materialsAmount: requiredNonNegativeNumber('Los materiales'),
+    visitAmount: requiredNonNegativeNumber('La visita'),
+    platformFeeAmount: requiredNonNegativeNumber('La comision de plataforma').optional(),
+    description: requiredText('La descripcion del presupuesto', 20, 3000),
+    estimatedDurationText: optionalShortText(120, 'La duracion estimada es demasiado larga.'),
+    validUntil: optionalDateString,
+  })
+  .superRefine((value, ctx) => {
+    const platformFeeAmount = Math.round(value.laborAmount * 0.05 * 100) / 100;
+    const total = value.laborAmount + value.visitAmount + platformFeeAmount;
+
+    if (total <= 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'El presupuesto debe incluir al menos un importe mayor a cero.',
+        path: ['laborAmount'],
+      });
+    }
+  });
+
+export const rejectJobQuoteSchema = z.object({
+  rejectedReason: optionalShortText(500, 'El motivo de rechazo es demasiado largo.'),
+});
+
 export type RoleSelectionInput = z.infer<typeof roleSelectionSchema>;
 export type SignInInput = z.infer<typeof signInSchema>;
 export type SignUpInput = z.infer<typeof signUpSchema>;
@@ -216,3 +278,7 @@ export type ProfessionalOnboardingInput = z.infer<typeof professionalOnboardingS
 export type CreateServiceRequestInput = z.infer<typeof createServiceRequestSchema>;
 export type CreateApplicationInput = z.infer<typeof createApplicationSchema>;
 export type CreateMessageInput = z.infer<typeof createMessageSchema>;
+export type ProposeJobVisitInput = z.infer<typeof proposeJobVisitSchema>;
+export type RecordJobDiagnosisInput = z.infer<typeof recordJobDiagnosisSchema>;
+export type CreateJobQuoteInput = z.infer<typeof createJobQuoteSchema>;
+export type RejectJobQuoteInput = z.infer<typeof rejectJobQuoteSchema>;

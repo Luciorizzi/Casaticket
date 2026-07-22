@@ -51,6 +51,13 @@ jest.mock('@/features/applications/chat-api', () => ({
   ensureApplicationConversation: jest.fn(),
 }));
 
+jest.mock('@/features/applications/job-panel', () => ({
+  JobPanel: () => null,
+}));
+jest.mock('@/features/jobs/customer-job-panel', () => ({
+  CustomerJobPanel: () => null,
+}));
+
 jest.mock('@/features/professional/professional-profile-form', () => {
   const React = jest.requireActual('react');
   const { Pressable, Text } = jest.requireActual('react-native');
