@@ -925,7 +925,8 @@ async function main() {
   if (
     validSelection.error ||
     validSelection.data?.[0]?.request_status !== 'professional_selected' ||
-    validSelection.data?.[0]?.selected_professional_id !== professionalProfile.id
+    validSelection.data?.[0]?.selected_professional_id !== professionalProfile.id ||
+    !validSelection.data?.[0]?.job_id
   ) {
     throw new Error(`Valid professional selection failed: ${validSelection.error?.message ?? 'unexpected result'}`);
   }
@@ -1033,13 +1034,309 @@ async function main() {
 
   if (
     selectedProfessionalJobs.error ||
-    !((selectedProfessionalJobs.data ?? []) as { request_id: string }[]).some(
-      (job) => job.request_id === selectionServiceRequestInsert.data.id,
+    !((selectedProfessionalJobs.data ?? []) as { job_id: string | null; job_status: string | null; request_id: string }[]).some(
+      (job) =>
+        job.request_id === selectionServiceRequestInsert.data.id &&
+        job.job_id !== null &&
+        job.job_status === 'coordination_pending',
     )
   ) {
     throw new Error(
       `Selected professional did not see selected job: ${selectedProfessionalJobs.error?.message ?? 'not found'}`,
     );
+  }
+
+  const selectedJobRead = await customerClient.rpc('get_job_by_request', {
+    p_request_id: selectionServiceRequestInsert.data.id,
+  });
+  const selectedJob = selectedJobRead.data?.[0] as { job_id: string; status: string } | undefined;
+
+  if (selectedJobRead.error || !selectedJob || selectedJob.status !== 'coordination_pending') {
+    throw new Error(
+      `Job was not created after professional selection: ${selectedJobRead.error?.message ?? 'not found'}`,
+    );
+  }
+
+  if (selectedJob.job_id !== validSelection.data[0].job_id) {
+    throw new Error('Selection RPC did not return the created job id.');
+  }
+
+  const selectedJobsCount = await adminClient
+    .from('jobs')
+    .select('id', { count: 'exact', head: true })
+    .eq('request_id', selectionServiceRequestInsert.data.id);
+
+  if (selectedJobsCount.error || selectedJobsCount.count !== 1) {
+    throw new Error(
+      `Selection did not create exactly one job: ${selectedJobsCount.error?.message ?? selectedJobsCount.count}`,
+    );
+  }
+
+  const duplicateJobInsert = await adminClient
+    .from('jobs')
+    .insert({
+      request_id: selectionServiceRequestInsert.data.id,
+      selected_application_id: selectedCandidateApplication.data.id,
+      customer_id: customerId,
+      professional_id: professionalProfile.id,
+      status: 'coordination_pending',
+    })
+    .select('id')
+    .single();
+
+  if (!duplicateJobInsert.error) {
+    throw new Error('Database unexpectedly allowed a second job for one request.');
+  }
+
+  const foreignCustomerJobRead = await bootstrapClient.rpc('get_job_by_request', {
+    p_request_id: selectionServiceRequestInsert.data.id,
+  });
+
+  if (foreignCustomerJobRead.error || (foreignCustomerJobRead.data ?? []).length !== 0) {
+    throw new Error(
+      `Foreign customer unexpectedly accessed job: ${foreignCustomerJobRead.error?.message ?? 'unexpected rows'}`,
+    );
+  }
+
+  const foreignProfessionalJobRead = await bootstrapProfessionalClient.rpc('get_job_by_request', {
+    p_request_id: selectionServiceRequestInsert.data.id,
+  });
+
+  if (foreignProfessionalJobRead.error || (foreignProfessionalJobRead.data ?? []).length !== 0) {
+    throw new Error(
+      `Foreign professional unexpectedly accessed job: ${foreignProfessionalJobRead.error?.message ?? 'unexpected rows'}`,
+    );
+  }
+
+  const foreignVisitProposal = await bootstrapProfessionalClient.rpc('propose_job_visit', {
+    p_job_id: selectedJob.job_id,
+    p_scheduled_date: '2026-08-01',
+    p_scheduled_time_text: '10 a 12',
+    p_scheduling_notes: 'Intento ajeno.',
+  });
+
+  if (!foreignVisitProposal.error) {
+    throw new Error('Foreign professional unexpectedly proposed a visit.');
+  }
+
+  const prematureDiagnosis = await professionalClient.rpc('record_job_diagnosis', {
+    p_job_id: selectedJob.job_id,
+    p_diagnosis_text: 'Diagnostico con longitud suficiente pero antes de confirmar visita.',
+    p_recommended_work_text: 'Trabajo recomendado suficiente.',
+    p_materials_notes: null,
+    p_diagnosis_notes: null,
+  });
+
+  if (!prematureDiagnosis.error) {
+    throw new Error('Professional unexpectedly registered diagnosis before confirmed visit.');
+  }
+
+  const visitProposal = await professionalClient.rpc('propose_job_visit', {
+    p_job_id: selectedJob.job_id,
+    p_scheduled_date: '2026-08-01',
+    p_scheduled_time_text: '10 a 12',
+    p_scheduling_notes: 'Coordinar acceso por chat.',
+  });
+
+  if (visitProposal.error || visitProposal.data?.[0]?.status !== 'visit_proposed') {
+    throw new Error(`Selected professional could not propose visit: ${visitProposal.error?.message ?? 'unexpected status'}`);
+  }
+
+  const confirmedVisit = await customerClient.rpc('confirm_job_visit', {
+    p_job_id: selectedJob.job_id,
+  });
+
+  if (confirmedVisit.error || confirmedVisit.data?.[0]?.status !== 'visit_confirmed') {
+    throw new Error(`Customer could not confirm visit: ${confirmedVisit.error?.message ?? 'unexpected status'}`);
+  }
+
+  const diagnosis = await professionalClient.rpc('record_job_diagnosis', {
+    p_job_id: selectedJob.job_id,
+    p_diagnosis_text: 'La instalacion requiere reemplazo de piezas y ajuste general con materiales menores.',
+    p_recommended_work_text: 'Reemplazar piezas dañadas y ajustar la instalacion.',
+    p_materials_notes: 'Materiales menores incluidos.',
+    p_diagnosis_notes: 'Cliente presente durante la visita.',
+  });
+
+  if (
+    diagnosis.error ||
+    diagnosis.data?.[0]?.status !== 'quote_pending' ||
+    diagnosis.data?.[0]?.recommended_work_text !== 'Reemplazar piezas dañadas y ajustar la instalacion.'
+  ) {
+    throw new Error(`Selected professional could not register diagnosis: ${diagnosis.error?.message ?? 'unexpected status'}`);
+  }
+
+  const firstQuote = await professionalClient.rpc('create_job_quote', {
+    p_job_id: selectedJob.job_id,
+    p_labor_amount: 10000,
+    p_materials_amount: 2500,
+    p_visit_amount: 1500,
+    p_description: 'Presupuesto formal inicial con mano de obra y materiales necesarios.',
+    p_estimated_duration_text: 'Un dia',
+    p_valid_until: '2026-08-30',
+  });
+  const firstQuoteRow = firstQuote.data?.[0] as {
+    id: string;
+    platform_fee_amount: number | string;
+    total_amount: number | string;
+    version: number;
+  } | undefined;
+
+  if (
+    firstQuote.error ||
+    !firstQuoteRow ||
+    Number(firstQuoteRow.platform_fee_amount) !== 500 ||
+    Number(firstQuoteRow.total_amount) !== 12000
+  ) {
+    throw new Error(`Backend did not create quote with calculated total: ${firstQuote.error?.message ?? 'unexpected total'}`);
+  }
+
+  const retriedFirstQuote = await professionalClient.rpc('create_job_quote', {
+    p_job_id: selectedJob.job_id,
+    p_labor_amount: 11000,
+    p_materials_amount: 2500,
+    p_visit_amount: 1500,
+    p_description: 'Presupuesto formal inicial actualizado sin duplicar version.',
+    p_estimated_duration_text: 'Un dia',
+    p_valid_until: '2026-08-30',
+  });
+  const retriedFirstQuoteRow = retriedFirstQuote.data?.[0] as {
+    id: string;
+    platform_fee_amount: number | string;
+    total_amount: number | string;
+    version: number;
+  } | undefined;
+
+  if (
+    retriedFirstQuote.error ||
+    !retriedFirstQuoteRow ||
+    retriedFirstQuoteRow.id !== firstQuoteRow.id ||
+    retriedFirstQuoteRow.version !== 1 ||
+    Number(retriedFirstQuoteRow.platform_fee_amount) !== 550 ||
+    Number(retriedFirstQuoteRow.total_amount) !== 13050
+  ) {
+    throw new Error(`Quote retry duplicated or failed to update draft: ${retriedFirstQuote.error?.message ?? 'unexpected row'}`);
+  }
+
+  const sentFirstQuote = await professionalClient.rpc('send_job_quote', {
+    p_quote_id: firstQuoteRow.id,
+  });
+
+  if (sentFirstQuote.error || sentFirstQuote.data?.[0]?.status !== 'sent') {
+    throw new Error(`Professional could not send quote: ${sentFirstQuote.error?.message ?? 'unexpected status'}`);
+  }
+
+  const sentJobRead = await customerClient
+    .from('jobs')
+    .select('status')
+    .eq('id', selectedJob.job_id)
+    .single();
+
+  if (sentJobRead.error || sentJobRead.data.status !== 'quote_sent') {
+    throw new Error(`Job was not marked quote_sent: ${sentJobRead.error?.message ?? 'unexpected status'}`);
+  }
+
+  const sentQuoteEditAttempt = await professionalClient
+    .from('job_quotes')
+    .update({ labor_amount: 1 })
+    .eq('id', firstQuoteRow.id)
+    .select('id')
+    .single();
+
+  if (!sentQuoteEditAttempt.error) {
+    throw new Error('Professional unexpectedly edited a sent quote directly.');
+  }
+
+  const foreignCustomerAccept = await bootstrapClient.rpc('accept_job_quote', {
+    p_quote_id: firstQuoteRow.id,
+  });
+
+  if (!foreignCustomerAccept.error) {
+    throw new Error('Foreign customer unexpectedly accepted a quote.');
+  }
+
+  const professionalAccept = await professionalClient.rpc('accept_job_quote', {
+    p_quote_id: firstQuoteRow.id,
+  });
+
+  if (!professionalAccept.error) {
+    throw new Error('Professional unexpectedly accepted a quote.');
+  }
+
+  const rejectedQuote = await customerClient.rpc('reject_job_quote', {
+    p_quote_id: firstQuoteRow.id,
+    p_rejected_reason: 'Necesito ajustar materiales.',
+  });
+
+  if (rejectedQuote.error || rejectedQuote.data?.[0]?.job_status !== 'quote_rejected') {
+    throw new Error(`Customer could not reject quote: ${rejectedQuote.error?.message ?? 'unexpected status'}`);
+  }
+
+  const rejectedQuoteRead = await customerClient
+    .from('job_quotes')
+    .select('rejection_reason')
+    .eq('id', firstQuoteRow.id)
+    .single();
+
+  if (rejectedQuoteRead.error || rejectedQuoteRead.data.rejection_reason !== 'Necesito ajustar materiales.') {
+    throw new Error(
+      `Quote rejection reason was not persisted: ${rejectedQuoteRead.error?.message ?? 'unexpected reason'}`,
+    );
+  }
+
+  const secondQuote = await professionalClient.rpc('create_job_quote', {
+    p_job_id: selectedJob.job_id,
+    p_labor_amount: 12000,
+    p_materials_amount: 3000,
+    p_visit_amount: 1500,
+    p_description: 'Presupuesto version dos luego del rechazo del cliente.',
+    p_estimated_duration_text: 'Un dia',
+    p_valid_until: '2026-08-30',
+  });
+  const secondQuoteRow = secondQuote.data?.[0] as { id: string } | undefined;
+
+  if (secondQuote.error || !secondQuoteRow) {
+    throw new Error(`Professional could not create version after rejection: ${secondQuote.error?.message ?? 'not found'}`);
+  }
+
+  const sentSecondQuote = await professionalClient.rpc('send_job_quote', {
+    p_quote_id: secondQuoteRow.id,
+  });
+
+  if (sentSecondQuote.error || sentSecondQuote.data?.[0]?.status !== 'sent') {
+    throw new Error(`Professional could not send second quote: ${sentSecondQuote.error?.message ?? 'unexpected status'}`);
+  }
+
+  const sentQuoteReplacementAttempt = await professionalClient.rpc('create_job_quote', {
+    p_job_id: selectedJob.job_id,
+    p_labor_amount: 13000,
+    p_materials_amount: 3000,
+    p_visit_amount: 1500,
+    p_description: 'Intento de crear version mientras hay un presupuesto enviado.',
+    p_estimated_duration_text: 'Un dia',
+    p_valid_until: '2026-08-30',
+  });
+
+  if (!sentQuoteReplacementAttempt.error) {
+    throw new Error('Professional unexpectedly created a new quote while a sent quote is pending response.');
+  }
+
+  const acceptedQuote = await customerClient.rpc('accept_job_quote', {
+    p_quote_id: secondQuoteRow.id,
+  });
+
+  if (acceptedQuote.error || acceptedQuote.data?.[0]?.job_status !== 'quote_accepted') {
+    throw new Error(`Customer could not accept own quote: ${acceptedQuote.error?.message ?? 'unexpected status'}`);
+  }
+
+  const acceptedJobRead = await customerClient
+    .from('jobs')
+    .select('status')
+    .eq('id', selectedJob.job_id)
+    .single();
+
+  if (acceptedJobRead.error || acceptedJobRead.data.status !== 'quote_accepted') {
+    throw new Error(`Job was not marked quote_accepted: ${acceptedJobRead.error?.message ?? 'unexpected status'}`);
   }
 
   const ownApplicationWithdraw = await professionalClient

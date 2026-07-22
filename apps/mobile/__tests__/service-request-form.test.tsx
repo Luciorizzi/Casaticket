@@ -5,6 +5,22 @@ import { TextInput as NativeTextInput } from 'react-native';
 
 import { ServiceRequestForm } from '@/features/customer/service-request-form';
 
+let mockDatePickerDate = new Date(2099, 6, 22);
+
+jest.mock('@react-native-community/datetimepicker', () => {
+  const React = jest.requireActual<typeof import('react')>('react');
+  const { Pressable, Text } = jest.requireActual<typeof import('react-native')>('react-native');
+
+  return {
+    __esModule: true,
+    default: ({ onChange }: { onChange: (event: { type: string }, date?: Date) => void }) => (
+      <Pressable onPress={() => onChange({ type: 'set' }, mockDatePickerDate)} testID="mock-date-time-picker">
+        <Text>Mock calendar</Text>
+      </Pressable>
+    ),
+  };
+});
+
 const categories: Category[] = [
   {
     id: '11111111-1111-4111-8111-111111111111',
@@ -59,6 +75,10 @@ function fillValidRequestForm() {
 }
 
 describe('ServiceRequestForm', () => {
+  beforeEach(() => {
+    mockDatePickerDate = new Date(2099, 6, 22);
+  });
+
   it('prevents submit and shows validation errors when required fields are missing', async () => {
     const onSubmit = renderForm();
 
@@ -74,8 +94,9 @@ describe('ServiceRequestForm', () => {
   it('rejects preferred dates in the past', async () => {
     const onSubmit = renderForm();
     fillValidRequestForm();
-    const inputs = screen.UNSAFE_getAllByType(NativeTextInput);
-    fireEvent.changeText(inputs[5], '2020-01-01');
+    mockDatePickerDate = new Date(2020, 0, 1);
+    fireEvent.press(screen.getByText('📅 Seleccionar fecha preferida'));
+    fireEvent.press(screen.getByTestId('mock-date-time-picker'));
 
     fireEvent.press(screen.getByText('Publicar solicitud'));
 

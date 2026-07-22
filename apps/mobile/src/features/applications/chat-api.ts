@@ -104,7 +104,7 @@ export async function getConversation(conversationId: string): Promise<Applicati
   const firstRow = rows[0];
 
   if (!firstRow) {
-    throw new Error('No pudimos abrir esta conversaciÃ³n.');
+    throw new Error('No pudimos abrir esta conversación.');
   }
 
   return mapConversation(firstRow);

@@ -12,6 +12,7 @@ const mockEqProfessional = jest.fn(() => ({
 }));
 const mockEqRequest = jest.fn(() => ({
   eq: mockEqProfessional,
+  maybeSingle: mockMaybeSingle,
 }));
 const mockOrder = jest.fn();
 const mockInsert = jest.fn((payload: Record<string, unknown>) => {
@@ -69,6 +70,35 @@ function createApplicationRow(overrides: Record<string, unknown> = {}) {
     created_at: '2026-07-20T12:00:00.000Z',
     updated_at: '2026-07-20T12:00:00.000Z',
     withdrawn_at: null,
+    ...overrides,
+  };
+}
+
+function createSelectedJobRow(overrides: Record<string, unknown> = {}) {
+  return {
+    application_id: 'application-1',
+    request_id: 'request-1',
+    title: 'Arreglo de pérdida',
+    category_name: 'Plomeria',
+    city: 'Lanus',
+    request_status: 'professional_selected',
+    selected_at: '2026-07-20T13:00:00.000Z',
+    conversation_id: 'conversation-1',
+    unread_count: 1,
+    last_message_body: 'Hola',
+    last_message_at: '2026-07-20T13:05:00.000Z',
+    job_id: 'job-1',
+    job_status: 'quote_pending',
+    ...overrides,
+  };
+}
+
+function createJobLookupRow(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'job-1',
+    selected_application_id: 'application-1',
+    request_id: 'request-1',
+    status: 'coordination_pending',
     ...overrides,
   };
 }
@@ -178,6 +208,8 @@ describe('professional opportunities api', () => {
           unread_count: 1,
           last_message_body: 'Hola',
           last_message_at: '2026-07-20T13:05:00.000Z',
+          job_id: 'job-1',
+          job_status: 'quote_pending',
         },
       ],
       error: null,
@@ -192,7 +224,53 @@ describe('professional opportunities api', () => {
       requestStatus: 'professional_selected',
       selectedAt: '2026-07-20T13:00:00.000Z',
       lastMessageBody: 'Hola',
+      jobId: 'job-1',
+      jobStatus: 'quote_pending',
       unreadCount: 1,
+    });
+  });
+
+  it('hydrates selected jobs with the real job id when the RPC does not include it', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: [createSelectedJobRow({ job_id: null, job_status: null })],
+      error: null,
+    });
+    mockMaybeSingle.mockResolvedValueOnce({
+      data: createJobLookupRow({ id: 'job-real-1', status: 'coordination_pending' }),
+      error: null,
+    });
+
+    const jobs = await listProfessionalSelectedJobs('professional-1');
+
+    expect(mockFrom).toHaveBeenCalledWith('jobs');
+    expect(mockSelect).toHaveBeenCalledWith('id, selected_application_id, request_id, status');
+    expect(mockEqRequest).toHaveBeenCalledWith('selected_application_id', 'application-1');
+    expect(jobs[0]).toMatchObject({
+      applicationId: 'application-1',
+      jobId: 'job-real-1',
+      jobStatus: 'coordination_pending',
+      requestId: 'request-1',
+    });
+  });
+
+  it('maps selected jobs from nested jobs joins', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: [
+        createSelectedJobRow({
+          job_id: null,
+          job_status: null,
+          jobs: [{ id: 'job-nested-1', status: 'coordination_pending' }],
+        }),
+      ],
+      error: null,
+    });
+
+    const jobs = await listProfessionalSelectedJobs('professional-1');
+
+    expect(mockFrom).not.toHaveBeenCalledWith('jobs');
+    expect(jobs[0]).toMatchObject({
+      jobId: 'job-nested-1',
+      jobStatus: 'coordination_pending',
     });
   });
 });

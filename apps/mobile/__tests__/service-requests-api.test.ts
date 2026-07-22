@@ -231,6 +231,7 @@ describe('service request api', () => {
           selected_professional_id: 'professional-1',
           selected_application_id: 'application-1',
           selected_at: '2026-07-20T13:00:00.000Z',
+          job_id: 'job-1',
         },
       ],
       error: null,
@@ -247,6 +248,7 @@ describe('service request api', () => {
       requestStatus: 'professional_selected',
       selectedProfessionalId: 'professional-1',
       selectedApplicationId: 'application-1',
+      jobId: 'job-1',
     });
   });
 });

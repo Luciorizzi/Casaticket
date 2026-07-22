@@ -32,6 +32,19 @@ export type ApplicationStatus = 'submitted' | 'viewed' | 'withdrawn' | 'selected
 
 export type ConversationStatus = 'active' | 'read_only' | 'closed';
 
+export type JobStatus =
+  | 'coordination_pending'
+  | 'visit_proposed'
+  | 'visit_confirmed'
+  | 'diagnosis_pending'
+  | 'quote_pending'
+  | 'quote_sent'
+  | 'quote_accepted'
+  | 'quote_rejected'
+  | 'cancelled';
+
+export type JobQuoteStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'superseded';
+
 export interface Profile {
   id: string;
   firstName: string;
@@ -187,6 +200,7 @@ export interface CustomerSelectionResult {
   selectedProfessionalId: string;
   selectedApplicationId: string;
   selectedAt: string;
+  jobId: string;
 }
 
 export interface ProfessionalSelectedJob {
@@ -201,6 +215,48 @@ export interface ProfessionalSelectedJob {
   unreadCount: number;
   lastMessageBody: string | null;
   lastMessageAt: string | null;
+  jobId: string | null;
+  jobStatus: JobStatus | null;
+}
+
+export interface Job {
+  id: string;
+  requestId: string;
+  selectedApplicationId: string;
+  customerId: string;
+  professionalId: string;
+  status: JobStatus;
+  scheduledDate: string | null;
+  scheduledTimeText: string | null;
+  schedulingNotes: string | null;
+  diagnosisText: string | null;
+  recommendedWorkText?: string | null;
+  materialsNotes?: string | null;
+  diagnosisNotes?: string | null;
+  diagnosedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JobQuote {
+  id: string;
+  jobId: string;
+  version: number;
+  laborAmount: number;
+  materialsAmount: number;
+  visitAmount: number;
+  platformFeeAmount: number;
+  totalAmount: number;
+  currency: string;
+  description: string;
+  estimatedDurationText: string | null;
+  validUntil: string | null;
+  status: JobQuoteStatus;
+  rejectedReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  acceptedAt: string | null;
+  rejectedAt: string | null;
 }
 
 export interface ApplicationConversation {

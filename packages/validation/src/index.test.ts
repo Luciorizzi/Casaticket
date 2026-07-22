@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   customerOnboardingSchema,
   createApplicationSchema,
+  createJobQuoteSchema,
   createMessageSchema,
   createServiceRequestSchema,
   professionalOnboardingSchema,
@@ -187,6 +188,28 @@ describe('validation schemas', () => {
         estimatedPrice: 25000,
       }).success,
     ).toBe(true);
+  });
+
+  it('validates job quotes without editable platform fee', () => {
+    const validPayload = {
+      description: 'Presupuesto formal con tareas y materiales necesarios.',
+      estimatedDurationText: 'Un dia',
+      laborAmount: 250000,
+      materialsAmount: 200000,
+      validUntil: undefined,
+      visitAmount: 15000,
+    };
+
+    expect(createJobQuoteSchema.safeParse(validPayload).success).toBe(true);
+    expect(createJobQuoteSchema.safeParse({ ...validPayload, laborAmount: -1 }).success).toBe(false);
+    expect(
+      createJobQuoteSchema.safeParse({
+        ...validPayload,
+        laborAmount: 0,
+        materialsAmount: 200000,
+        visitAmount: 0,
+      }).success,
+    ).toBe(false);
   });
 
   it('validates chat messages', () => {

@@ -21,4 +21,7 @@ export const queryKeys = {
   conversationMessages: (conversationId: string) => ['conversation-messages', conversationId] as const,
   conversationUnreadCount: (conversationId: string) =>
     ['conversation-unread-count', conversationId] as const,
+  job: (requestId: string) => ['job', requestId] as const,
+  jobQuote: (quoteId: string) => ['job-quote', quoteId] as const,
+  jobQuotes: (jobId: string) => ['job-quotes', jobId] as const,
 };

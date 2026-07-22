@@ -45,7 +45,9 @@ interface ApplicationRow {
 }
 
 interface SelectedJobRpcRow {
-  application_id: string;
+  application_id?: string | null;
+  selected_application_id?: string | null;
+  jobs?: SelectedJobNestedRow | SelectedJobNestedRow[] | null;
   request_id: string;
   title: string;
   category_name: string | null;
@@ -56,6 +58,20 @@ interface SelectedJobRpcRow {
   unread_count: number | null;
   last_message_body: string | null;
   last_message_at: string | null;
+  job_id?: string | null;
+  job_status?: ProfessionalSelectedJob['jobStatus'];
+}
+
+interface SelectedJobNestedRow {
+  id: string | null;
+  status: ProfessionalSelectedJob['jobStatus'] | null;
+}
+
+interface SelectedJobLookupRow {
+  id: string;
+  selected_application_id: string;
+  request_id: string;
+  status: ProfessionalSelectedJob['jobStatus'];
 }
 
 function mapOpportunity(row: OpportunityRpcRow): ProfessionalOpportunity {
@@ -107,8 +123,11 @@ function mapApplication(row: ApplicationRow): ProfessionalApplication {
 }
 
 function mapSelectedJob(row: SelectedJobRpcRow): ProfessionalSelectedJob {
+  const applicationId = row.application_id ?? row.selected_application_id ?? '';
+  const rawJob = Array.isArray(row.jobs) ? row.jobs[0] : row.jobs;
+
   return {
-    applicationId: row.application_id,
+    applicationId,
     requestId: row.request_id,
     title: row.title,
     categoryName: row.category_name,
@@ -119,6 +138,42 @@ function mapSelectedJob(row: SelectedJobRpcRow): ProfessionalSelectedJob {
     unreadCount: row.unread_count ?? 0,
     lastMessageBody: row.last_message_body,
     lastMessageAt: row.last_message_at,
+    jobId: row.job_id ?? rawJob?.id ?? null,
+    jobStatus: row.job_status ?? rawJob?.status ?? null,
+  };
+}
+
+async function getSelectedJobLookup(applicationId: string): Promise<SelectedJobLookupRow | null> {
+  const { data, error } = await supabase
+    .from('jobs')
+    .select('id, selected_application_id, request_id, status')
+    .eq('selected_application_id', applicationId)
+    .maybeSingle();
+
+  if (error) {
+    logDevelopmentSupabaseError('professional-jobs:lookup-selected-job', error);
+    throw error;
+  }
+
+  return data as SelectedJobLookupRow | null;
+}
+
+async function hydrateSelectedJob(job: ProfessionalSelectedJob): Promise<ProfessionalSelectedJob> {
+  if (job.jobId || !job.applicationId) {
+    return job;
+  }
+
+  const selectedJob = await getSelectedJobLookup(job.applicationId);
+
+  if (!selectedJob) {
+    return job;
+  }
+
+  return {
+    ...job,
+    jobId: selectedJob.id,
+    jobStatus: selectedJob.status,
+    requestId: selectedJob.request_id,
   };
 }
 
@@ -262,5 +317,7 @@ export async function listProfessionalSelectedJobs(
     throw error;
   }
 
-  return ((data ?? []) as SelectedJobRpcRow[]).map((row) => mapSelectedJob(row));
+  const selectedJobs = ((data ?? []) as SelectedJobRpcRow[]).map((row) => mapSelectedJob(row));
+
+  return Promise.all(selectedJobs.map((job) => hydrateSelectedJob(job)));
 }

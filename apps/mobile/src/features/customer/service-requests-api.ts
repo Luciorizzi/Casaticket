@@ -80,6 +80,7 @@ interface CustomerSelectionResultRow {
   selected_professional_id: string;
   selected_application_id: string;
   selected_at: string;
+  job_id: string;
 }
 
 const serviceRequestSelect = `
@@ -180,6 +181,7 @@ function mapCustomerSelectionResult(row: CustomerSelectionResultRow): CustomerSe
     selectedProfessionalId: row.selected_professional_id,
     selectedApplicationId: row.selected_application_id,
     selectedAt: row.selected_at,
+    jobId: row.job_id,
   };
 }
 
@@ -310,7 +312,7 @@ export async function markCustomerApplicationViewed(
   const firstRow = rows[0];
 
   if (!firstRow) {
-    throw new Error('No pudimos marcar la postulaciÃ³n como vista.');
+    throw new Error('No pudimos marcar la postulación como vista.');
   }
 
   return firstRow;

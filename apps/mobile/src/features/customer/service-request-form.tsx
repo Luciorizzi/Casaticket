@@ -14,6 +14,7 @@ import { ErrorState } from '@/components/ui/error-state';
 import { FormField } from '@/components/ui/form-field';
 import { TextInput } from '@/components/ui/text-input';
 import { colors } from '@/components/ui/theme';
+import { DatePickerField } from '@/features/jobs/date-picker-field';
 
 interface ServiceRequestFormProps {
   categories: Category[];
@@ -228,13 +229,14 @@ export function ServiceRequestForm({
       <Controller
         control={control}
         name="preferredDate"
-        render={({ field: { onBlur, onChange, value } }) => (
+        render={({ field: { onChange, value } }) => (
           <FormField error={errors.preferredDate?.message} label="Fecha preferida opcional">
-            <TextInput
-              onBlur={onBlur}
-              onChangeText={onChange}
-              placeholder="AAAA-MM-DD"
-              value={value ?? ''}
+            <DatePickerField
+              allowClear
+              disablePast
+              onChange={onChange}
+              placeholder="Seleccionar fecha preferida"
+              value={value ?? null}
             />
           </FormField>
         )}
