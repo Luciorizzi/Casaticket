@@ -142,7 +142,9 @@ describe('professional opportunities api', () => {
   it('maps professional opportunities without exposing exact address', async () => {
     const opportunities = await listProfessionalOpportunities('professional-1');
 
-    expect(mockRpc).toHaveBeenCalledWith('list_professional_opportunities');
+    expect(mockRpc).toHaveBeenCalledWith('list_professional_opportunities', {
+      p_professional_id: 'professional-1',
+    });
     expect(opportunities[0]).toMatchObject({
       requestId: 'request-1',
       categoryName: 'Plomeria',

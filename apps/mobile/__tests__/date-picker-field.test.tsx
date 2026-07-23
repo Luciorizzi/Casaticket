@@ -29,6 +29,7 @@ describe('DatePickerField', () => {
     render(<DatePickerField onChange={onChange} value={null} />);
 
     fireEvent.press(screen.getByText('📅 Seleccionar fecha'));
+    expect(screen.getByTestId('date-picker-surface')).toBeTruthy();
     fireEvent.press(screen.getByTestId('mock-date-time-picker'));
 
     expect(onChange).toHaveBeenCalledWith('2099-07-22');

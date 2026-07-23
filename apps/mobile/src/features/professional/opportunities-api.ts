@@ -180,9 +180,9 @@ async function hydrateSelectedJob(job: ProfessionalSelectedJob): Promise<Profess
 export async function listProfessionalOpportunities(
   professionalId: string,
 ): Promise<ProfessionalOpportunity[]> {
-  void professionalId;
-
-  const { data, error } = await supabase.rpc('list_professional_opportunities');
+  const { data, error } = await supabase.rpc('list_professional_opportunities', {
+    p_professional_id: professionalId,
+  });
 
   if (error) {
     logDevelopmentSupabaseError('professional-opportunities:list', error);
@@ -196,9 +196,8 @@ export async function getProfessionalOpportunity(
   requestId: string,
   professionalId: string,
 ): Promise<ProfessionalOpportunity> {
-  void professionalId;
-
   const { data, error } = await supabase.rpc('get_professional_opportunity', {
+    p_professional_id: professionalId,
     p_request_id: requestId,
   });
 

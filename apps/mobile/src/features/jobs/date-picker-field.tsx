@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import DateTimePicker, {
   type DateTimePickerEvent,
 } from '@react-native-community/datetimepicker';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { Button } from '@/components/ui/button';
 import { colors } from '@/components/ui/theme';
@@ -72,6 +72,19 @@ export function DatePickerField({
 
     onChange(toDateString(nextDate));
   };
+  const picker = (
+    <DateTimePicker
+      {...(minimumDate ? { minimumDate } : {})}
+      accentColor={colors.accent}
+      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+      locale="es-AR"
+      mode="date"
+      onChange={handleChange}
+      textColor={colors.text}
+      themeVariant="light"
+      value={selectedDate}
+    />
+  );
 
   return (
     <View style={styles.stack}>
@@ -87,15 +100,24 @@ export function DatePickerField({
           Limpiar fecha
         </Button>
       ) : null}
-      {open ? (
-        <DateTimePicker
-          {...(minimumDate ? { minimumDate } : {})}
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-          locale="es-AR"
-          mode="date"
-          onChange={handleChange}
-          value={selectedDate}
-        />
+      {open && Platform.OS === 'ios' ? (
+        <Modal animationType="fade" onRequestClose={() => setOpen(false)} transparent visible={open}>
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <Text style={styles.modalTitle}>Seleccionar fecha</Text>
+              <View style={styles.pickerSurface} testID="date-picker-surface">
+                {picker}
+              </View>
+              <Button onPress={() => setOpen(false)} variant="secondary">
+                Listo
+              </Button>
+            </View>
+          </View>
+        </Modal>
+      ) : open ? (
+        <View style={styles.pickerSurface} testID="date-picker-surface">
+          {picker}
+        </View>
       ) : null}
     </View>
   );
@@ -122,6 +144,28 @@ const styles = StyleSheet.create({
   placeholder: {
     color: '#8d7f6c',
     fontSize: 16,
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(29, 24, 17, 0.36)',
+    padding: 20,
+  },
+  modalCard: {
+    gap: 14,
+    borderRadius: 20,
+    backgroundColor: colors.surface,
+    padding: 18,
+  },
+  modalTitle: {
+    color: colors.text,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  pickerSurface: {
+    overflow: 'hidden',
+    borderRadius: 16,
+    backgroundColor: colors.surface,
   },
 });
 

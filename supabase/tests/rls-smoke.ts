@@ -9,6 +9,16 @@ interface ProfessionalOpportunitySmokeRow {
   customer_id?: string;
 }
 
+const smokeServiceRequestTitles = [
+  'Arreglo de perdida',
+  'No se que rubro necesito',
+  'Solicitud visible tras retiro',
+  'Solicitud para seleccionar profesional',
+  'Solicitud con postulacion retirada',
+  'Solicitud ajena',
+  'Solicitud cancelada sin postulaciones',
+] as const;
+
 function requireEnv(value: string | undefined, name: string): string {
   if (!value) {
     throw new Error(`Missing environment variable: ${name}`);
@@ -60,6 +70,17 @@ async function createBootstrapUser(
   return { id: createdUser.user.id };
 }
 
+async function cleanupSmokeServiceRequests(adminClient: SupabaseClient) {
+  const { error } = await adminClient
+    .from('service_requests')
+    .delete()
+    .in('title', [...smokeServiceRequestTitles]);
+
+  if (error) {
+    throw error;
+  }
+}
+
 async function main() {
   const supabaseUrl = requireEnv(
     process.env.SUPABASE_URL ?? process.env.NEXT_PUBLIC_SUPABASE_URL,
@@ -74,6 +95,8 @@ async function main() {
   const adminClient = createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });
+
+  await cleanupSmokeServiceRequests(adminClient);
 
   const customerClient = createClient(supabaseUrl, anonKey, {
     auth: { autoRefreshToken: false, persistSession: false },
@@ -354,7 +377,9 @@ async function main() {
     );
   }
 
-  const compatibleOpportunityRead = await professionalClient.rpc('list_professional_opportunities');
+  const compatibleOpportunityRead = await professionalClient.rpc('list_professional_opportunities', {
+    p_professional_id: professionalProfile.id,
+  });
 
   if (compatibleOpportunityRead.error) {
     throw new Error(`Professional could not read compatible opportunities: ${compatibleOpportunityRead.error.message}`);
@@ -373,7 +398,9 @@ async function main() {
     throw new Error('Professional opportunity unexpectedly exposed private customer data.');
   }
 
-  const incompatibleOpportunityRead = await bootstrapProfessionalClient.rpc('list_professional_opportunities');
+  const incompatibleOpportunityRead = await bootstrapProfessionalClient.rpc('list_professional_opportunities', {
+    p_professional_id: bootstrapProfessionalProfile.data.id,
+  });
 
   if (incompatibleOpportunityRead.error) {
     throw new Error(
@@ -413,7 +440,9 @@ async function main() {
     );
   }
 
-  const uncategorizedOpportunityRead = await bootstrapProfessionalClient.rpc('list_professional_opportunities');
+  const uncategorizedOpportunityRead = await bootstrapProfessionalClient.rpc('list_professional_opportunities', {
+    p_professional_id: bootstrapProfessionalProfile.data.id,
+  });
 
   if (
     uncategorizedOpportunityRead.error ||
@@ -445,6 +474,107 @@ async function main() {
   if (ownApplicationInsert.error || ownApplicationInsert.data.status !== 'submitted') {
     throw new Error(
       `Professional could not create own application: ${ownApplicationInsert.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const activeApplicationOpportunityRead = await professionalClient.rpc('list_professional_opportunities', {
+    p_professional_id: professionalProfile.id,
+  });
+
+  if (activeApplicationOpportunityRead.error) {
+    throw new Error(
+      `Professional could not read opportunities after applying: ${activeApplicationOpportunityRead.error.message}`,
+    );
+  }
+
+  if (
+    ((activeApplicationOpportunityRead.data ?? []) as ProfessionalOpportunitySmokeRow[]).some(
+      (opportunity) => opportunity.request_id === ownServiceRequestInsert.data.id,
+    )
+  ) {
+    throw new Error('Professional still saw a request with an active own application.');
+  }
+
+  const withdrawnVisibilityRequestInsert = await customerClient
+    .from('service_requests')
+    .insert({
+      customer_id: customerId,
+      category_id: serviceRequestCategoryId,
+      title: 'Solicitud visible tras retiro',
+      description: 'Solicitud para validar que una postulacion retirada no bloquea oportunidades.',
+      request_type: 'specific_task',
+      urgency: 'flexible',
+      address_text: 'Calle retiro 123',
+      city: 'Lanus',
+      province: 'Buenos Aires',
+      status: 'published',
+      published_at: new Date().toISOString(),
+    })
+    .select('id')
+    .single();
+
+  if (withdrawnVisibilityRequestInsert.error || !withdrawnVisibilityRequestInsert.data) {
+    throw new Error(
+      `Customer could not create withdrawn visibility request: ${withdrawnVisibilityRequestInsert.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const withdrawnVisibilityApplicationInsert = await professionalClient
+    .from('applications')
+    .insert({
+      request_id: withdrawnVisibilityRequestInsert.data.id,
+      professional_id: professionalProfile.id,
+      message: 'Puedo revisar esta solicitud antes de retirarla para validar visibilidad.',
+      proposal_type: 'diagnostic_visit',
+      visit_price: 5000,
+      estimated_price: null,
+      estimated_duration_text: null,
+      availability_text: 'Viernes por la tarde',
+      status: 'submitted',
+    })
+    .select('id, status')
+    .single();
+
+  if (
+    withdrawnVisibilityApplicationInsert.error ||
+    withdrawnVisibilityApplicationInsert.data.status !== 'submitted'
+  ) {
+    throw new Error(
+      `Professional could not create withdrawn visibility application: ${withdrawnVisibilityApplicationInsert.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const withdrawnVisibilityApplicationWithdraw = await professionalClient
+    .from('applications')
+    .update({
+      status: 'withdrawn',
+      withdrawn_at: new Date().toISOString(),
+    })
+    .eq('id', withdrawnVisibilityApplicationInsert.data.id)
+    .select('id, status')
+    .single();
+
+  if (
+    withdrawnVisibilityApplicationWithdraw.error ||
+    withdrawnVisibilityApplicationWithdraw.data.status !== 'withdrawn'
+  ) {
+    throw new Error(
+      `Professional could not withdraw visibility application: ${withdrawnVisibilityApplicationWithdraw.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const withdrawnApplicationOpportunityRead = await professionalClient.rpc('list_professional_opportunities', {
+    p_professional_id: professionalProfile.id,
+  });
+
+  if (
+    withdrawnApplicationOpportunityRead.error ||
+    !((withdrawnApplicationOpportunityRead.data ?? []) as ProfessionalOpportunitySmokeRow[]).some(
+      (opportunity) => opportunity.request_id === withdrawnVisibilityRequestInsert.data.id,
+    )
+  ) {
+    throw new Error(
+      `Withdrawn application permanently blocked opportunity: ${withdrawnApplicationOpportunityRead.error?.message ?? 'not found'}`,
     );
   }
 
@@ -1818,6 +1948,8 @@ async function main() {
   if (!cancelledApplicationInsert.error) {
     throw new Error('Professional unexpectedly applied to a cancelled service request.');
   }
+
+  await cleanupSmokeServiceRequests(adminClient);
 
   console.log('RLS smoke test passed.');
 }

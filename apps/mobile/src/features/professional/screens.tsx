@@ -1,9 +1,20 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
-import { router, type Href } from 'expo-router';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { router, type Href, useFocusEffect } from 'expo-router';
+import {
+  ActivityIndicator,
+  Alert,
+  Modal,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 
 import {
+  SERVICE_REQUEST_URGENCIES,
   getApplicationProposalTypeLabel,
   getApplicationStatusLabel,
   getProfileDisplayName,
@@ -11,6 +22,7 @@ import {
   getServiceRequestUrgencyLabel,
 } from '@casaticket/domain';
 import type {
+  Category,
   ProfessionalApplication,
   ProfessionalOpportunity,
   ProfessionalSelectedJob,
@@ -24,6 +36,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { ErrorState } from '@/components/ui/error-state';
 import { LoadingState } from '@/components/ui/loading-state';
 import { Screen } from '@/components/ui/screen';
+import { TextInput } from '@/components/ui/text-input';
 import {
   getAvailabilityBadge,
   getVerificationLabel,
@@ -35,6 +48,11 @@ import { useAuthSession } from '@/features/auth/auth-provider';
 import { listActiveCategories } from '@/features/categories/api';
 import { resolveAppRoute } from '@/features/navigation/access';
 import { ApplicationForm } from '@/features/professional/application-form';
+import {
+  BUENOS_AIRES_CITY_OPTIONS,
+  getCityFilterValue,
+  normalizeCityName,
+} from '@/features/professional/city-catalog';
 import {
   createApplication,
   getOwnApplication,
@@ -127,48 +145,146 @@ export function ProfessionalHomeScreen() {
   );
 }
 
+type FilterOption = {
+  keywords?: string[];
+  label: string;
+  value: string;
+};
+
 export function ProfessionalOpportunitiesScreen() {
+  const queryClient = useQueryClient();
   const { sessionState } = useAuthSession();
   const professionalProfile =
     sessionState.status === 'authenticated' ? sessionState.professionalProfile : null;
   const professionalId = professionalProfile?.id ?? null;
-  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
-  const [urgencyFilter, setUrgencyFilter] = useState<string | null>(null);
-  const [cityFilter, setCityFilter] = useState<string | null>(null);
-  const [onlyWithoutApplication, setOnlyWithoutApplication] = useState(false);
+  const opportunitiesQueryKey = useMemo(
+    () =>
+      professionalId
+        ? queryKeys.professionalOpportunities(professionalId)
+        : ['professional-opportunities'],
+    [professionalId],
+  );
+  const applicationsQueryKey = useMemo(
+    () =>
+      professionalId
+        ? queryKeys.professionalApplications(professionalId)
+        : ['professional-applications'],
+    [professionalId],
+  );
+  const professionalCategoryIds = useMemo(
+    () => (sessionState.status === 'authenticated' ? sessionState.professionalCategoryIds : []),
+    [sessionState],
+  );
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [urgencyFilter, setUrgencyFilter] = useState('all');
+  const [cityFilter, setCityFilter] = useState('all');
+  const refreshInFlightRef = useRef(false);
   const opportunitiesQuery = useQuery({
-    queryKey: professionalId
-      ? queryKeys.professionalOpportunities(professionalId)
-      : ['professional-opportunities'],
+    queryKey: opportunitiesQueryKey,
     queryFn: () => listProfessionalOpportunities(professionalId ?? ''),
     enabled: Boolean(professionalId),
   });
   const applicationsQuery = useQuery({
-    queryKey: professionalId
-      ? queryKeys.professionalApplications(professionalId)
-      : ['professional-applications'],
+    queryKey: applicationsQueryKey,
     queryFn: () => listOwnApplications(professionalId ?? ''),
     enabled: Boolean(professionalId),
   });
-  const applicationsByRequest = useMemo(
+  const categoryQuery = useQuery({
+    queryKey: queryKeys.categories,
+    queryFn: listActiveCategories,
+  });
+  const activeApplicationsByRequest = useMemo(
     () =>
-      new Map((applicationsQuery.data ?? []).map((application) => [application.requestId, application])),
+      new Map(
+        (applicationsQuery.data ?? [])
+          .filter((application) => ['submitted', 'viewed', 'selected'].includes(application.status))
+          .map((application) => [application.requestId, application]),
+      ),
     [applicationsQuery.data],
   );
-  const opportunities = opportunitiesQuery.data ?? [];
-  const categories = uniqueValues(opportunities.map((opportunity) => opportunity.categoryName ?? 'Sin categoría'));
-  const urgencies = uniqueValues(opportunities.map((opportunity) => opportunity.urgency));
-  const cities = uniqueValues(opportunities.map((opportunity) => opportunity.city));
+  const professionalCategoryIdSet = useMemo(
+    () => new Set(professionalCategoryIds),
+    [professionalCategoryIds],
+  );
+  const activeCategories = useMemo(
+    () => (categoryQuery.data ?? []).filter((category) => category.active),
+    [categoryQuery.data],
+  );
+  const categoriesById = useMemo(
+    () => new Map(activeCategories.map((category) => [category.id, category])),
+    [activeCategories],
+  );
+  const opportunities = useMemo(
+    () =>
+      dedupeOpportunities(opportunitiesQuery.data ?? [])
+        .filter((opportunity) =>
+          isOpportunityCompatibleWithProfessional(opportunity, professionalCategoryIdSet),
+        ),
+    [opportunitiesQuery.data, professionalCategoryIdSet],
+  );
+  const categoryFilters = useMemo(
+    () => createOpportunityCategoryFilters(activeCategories),
+    [activeCategories],
+  );
+  const cityFilters = useMemo(
+    () => createCityFilterOptions(opportunities),
+    [opportunities],
+  );
+  const urgencyFilters = useMemo(
+    () => createUrgencyFilterOptions(),
+    [],
+  );
   const filteredOpportunities = opportunities.filter((opportunity) => {
-    const categoryName = opportunity.categoryName ?? 'Sin categoría';
+    const matchesCategory = matchesOpportunityCategoryFilter(
+      opportunity,
+      categoryFilter,
+    );
+    const matchesCity = cityFilter === 'all' || getCityFilterValue(opportunity.city) === cityFilter;
+    const matchesUrgency = urgencyFilter === 'all' || opportunity.urgency === urgencyFilter;
 
     return (
-      (!categoryFilter || categoryName === categoryFilter) &&
-      (!urgencyFilter || opportunity.urgency === urgencyFilter) &&
-      (!cityFilter || opportunity.city === cityFilter) &&
-      (!onlyWithoutApplication || !applicationsByRequest.has(opportunity.requestId))
+      matchesCategory &&
+      matchesCity &&
+      matchesUrgency &&
+      !activeApplicationsByRequest.has(opportunity.requestId)
     );
   });
+  const isRefreshing =
+    opportunitiesQuery.isRefetching || applicationsQuery.isRefetching || categoryQuery.isRefetching;
+
+  const refreshOpportunities = useCallback(() => {
+    if (!professionalId || refreshInFlightRef.current) {
+      return;
+    }
+
+    refreshInFlightRef.current = true;
+
+    void Promise.allSettled([
+      queryClient.refetchQueries({ exact: true, queryKey: opportunitiesQueryKey }),
+      queryClient.refetchQueries({ exact: true, queryKey: applicationsQueryKey }),
+      queryClient.refetchQueries({ exact: true, queryKey: queryKeys.categories }),
+    ]).finally(() => {
+      refreshInFlightRef.current = false;
+    });
+  }, [applicationsQueryKey, opportunitiesQueryKey, professionalId, queryClient]);
+  const hasActiveFilters = categoryFilter !== 'all' || cityFilter !== 'all' || urgencyFilter !== 'all';
+  const selectedFilterSummary = [
+    getOptionLabel(categoryFilters, categoryFilter),
+    getOptionLabel(cityFilters, cityFilter),
+    getOptionLabel(urgencyFilters, urgencyFilter),
+  ].join(' · ');
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!professionalId) {
+        return undefined;
+      }
+
+      refreshOpportunities();
+
+      return undefined;
+    }, [professionalId, refreshOpportunities]),
+  );
 
   if (!professionalId) {
     return (
@@ -194,6 +310,7 @@ export function ProfessionalOpportunitiesScreen() {
           onRetry={() => {
             void opportunitiesQuery.refetch();
             void applicationsQuery.refetch();
+            void categoryQuery.refetch();
           }}
         />
       </Screen>
@@ -202,45 +319,55 @@ export function ProfessionalOpportunitiesScreen() {
 
   return (
     <Screen
+      scroll={false}
       subtitle="Solicitudes publicadas compatibles con tus rubros. No mostramos dirección exacta ni datos del cliente."
       title="Oportunidades"
     >
-      <OpportunityFilters
-        categories={categories}
-        categoryFilter={categoryFilter}
-        cities={cities}
-        cityFilter={cityFilter}
-        onCategoryChange={setCategoryFilter}
-        onCityChange={setCityFilter}
-        onOnlyWithoutApplicationChange={setOnlyWithoutApplication}
-        onUrgencyChange={setUrgencyFilter}
-        onlyWithoutApplication={onlyWithoutApplication}
-        urgencies={urgencies}
-        urgencyFilter={urgencyFilter}
-      />
-      <Button
-        onPress={() => {
-          void opportunitiesQuery.refetch();
-          void applicationsQuery.refetch();
-        }}
-        variant="secondary"
+      <ScrollView
+        contentContainerStyle={styles.opportunitiesScrollContent}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={refreshOpportunities} tintColor="#bb5e3c" />
+        }
       >
-        Actualizar oportunidades
-      </Button>
-      {filteredOpportunities.length === 0 ? (
-        <EmptyState
-          description="No hay solicitudes compatibles con los filtros actuales."
-          title="Sin oportunidades todavía"
+        <OpportunityFilters
+          categoryFilter={categoryFilter}
+          categoryFilters={categoryFilters}
+          cityFilter={cityFilter}
+          cityFilters={cityFilters}
+          hasActiveFilters={hasActiveFilters}
+          onCategoryChange={setCategoryFilter}
+          onCityChange={setCityFilter}
+          onClearFilters={() => {
+            setCategoryFilter('all');
+            setCityFilter('all');
+            setUrgencyFilter('all');
+          }}
+          onRefresh={refreshOpportunities}
+          onUrgencyChange={setUrgencyFilter}
+          refreshDisabled={isRefreshing}
+          refreshLoading={isRefreshing}
+          selectedSummary={selectedFilterSummary}
+          urgencyFilter={urgencyFilter}
+          urgencyFilters={urgencyFilters}
         />
-      ) : (
-        filteredOpportunities.map((opportunity) => (
-          <OpportunityListItem
-            application={applicationsByRequest.get(opportunity.requestId) ?? null}
-            key={opportunity.requestId}
-            opportunity={opportunity}
+        <OpportunityListHeader count={filteredOpportunities.length} />
+        {filteredOpportunities.length === 0 ? (
+          <EmptyState
+            description="Prob? cambiar los filtros o actualizar la lista."
+            title="No hay oportunidades disponibles."
           />
-        ))
-      )}
+        ) : (
+          filteredOpportunities.map((opportunity) => (
+            <OpportunityListItem
+              application={activeApplicationsByRequest.get(opportunity.requestId) ?? null}
+              categoryName={getOpportunityCategoryName(opportunity, categoriesById)}
+              key={opportunity.requestId}
+              opportunity={opportunity}
+            />
+          ))
+        )}
+      </ScrollView>
     </Screen>
   );
 }
@@ -689,129 +816,241 @@ function ProfessionalProfileEditorScreen({
 }
 
 function OpportunityFilters({
-  categories,
   categoryFilter,
-  cities,
+  categoryFilters,
   cityFilter,
+  cityFilters,
+  hasActiveFilters,
   onCategoryChange,
   onCityChange,
-  onOnlyWithoutApplicationChange,
+  onClearFilters,
+  onRefresh,
   onUrgencyChange,
-  onlyWithoutApplication,
-  urgencies,
+  refreshDisabled,
+  refreshLoading,
+  selectedSummary,
   urgencyFilter,
+  urgencyFilters,
 }: {
-  categories: string[];
-  categoryFilter: string | null;
-  cities: string[];
-  cityFilter: string | null;
-  onCategoryChange: (value: string | null) => void;
-  onCityChange: (value: string | null) => void;
-  onOnlyWithoutApplicationChange: (value: boolean) => void;
-  onUrgencyChange: (value: string | null) => void;
-  onlyWithoutApplication: boolean;
-  urgencies: string[];
-  urgencyFilter: string | null;
+  categoryFilter: string;
+  categoryFilters: FilterOption[];
+  cityFilter: string;
+  cityFilters: FilterOption[];
+  hasActiveFilters: boolean;
+  onCategoryChange: (value: string) => void;
+  onCityChange: (value: string) => void;
+  onClearFilters: () => void;
+  onRefresh: () => void;
+  onUrgencyChange: (value: string) => void;
+  refreshDisabled: boolean;
+  refreshLoading: boolean;
+  selectedSummary: string;
+  urgencyFilter: string;
+  urgencyFilters: FilterOption[];
 }) {
   return (
     <Card>
-      <Text style={styles.filterTitle}>Filtros rápidos</Text>
-      <FilterPills
-        currentValue={categoryFilter}
-        label="Categoría"
-        onChange={onCategoryChange}
-        values={categories}
-      />
-      <FilterPills
-        currentValue={urgencyFilter}
-        label="Urgencia"
-        onChange={onUrgencyChange}
-        values={urgencies}
-        valueLabel={(value) => getServiceRequestUrgencyLabel(value as ProfessionalOpportunity['urgency'])}
-      />
-      <FilterPills currentValue={cityFilter} label="Ciudad" onChange={onCityChange} values={cities} />
-      <Pressable
-        onPress={() => onOnlyWithoutApplicationChange(!onlyWithoutApplication)}
-        style={[styles.choice, onlyWithoutApplication ? styles.choiceSelected : null]}
-      >
-        <Text style={[styles.choiceLabel, onlyWithoutApplication ? styles.choiceLabelSelected : null]}>
-          Solo sin mi postulación
-        </Text>
-      </Pressable>
+      <View style={styles.filterToolbar}>
+        <SearchableFilter
+          label="Categoría"
+          onSelect={onCategoryChange}
+          options={categoryFilters}
+          selectedValue={categoryFilter}
+        />
+        <SearchableFilter
+          label="Ciudad"
+          onSelect={onCityChange}
+          options={cityFilters}
+          selectedValue={cityFilter}
+        />
+        <SearchableFilter
+          label="Urgencia"
+          onSelect={onUrgencyChange}
+          options={urgencyFilters}
+          searchable={false}
+          selectedValue={urgencyFilter}
+        />
+        <RefreshIconButton disabled={refreshDisabled} loading={refreshLoading} onRefresh={onRefresh} />
+      </View>
+      <Text numberOfLines={1} style={styles.filterSummary}>
+        {selectedSummary}
+      </Text>
+      {hasActiveFilters ? (
+        <Pressable accessibilityRole="button" onPress={onClearFilters} style={styles.clearFiltersButton}>
+          <Text style={styles.clearFiltersLabel}>Limpiar filtros</Text>
+        </Pressable>
+      ) : null}
     </Card>
   );
 }
 
-function FilterPills({
-  currentValue,
+function SearchableFilter({
   label,
-  onChange,
-  valueLabel = (value) => value,
-  values,
+  onSelect,
+  options,
+  searchable = true,
+  selectedValue,
 }: {
-  currentValue: string | null;
   label: string;
-  onChange: (value: string | null) => void;
-  valueLabel?: (value: string) => string;
-  values: string[];
+  onSelect: (value: string) => void;
+  options: FilterOption[];
+  searchable?: boolean;
+  selectedValue: string;
 }) {
-  if (values.length === 0) {
-    return null;
-  }
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const selectedLabel = getOptionLabel(options, selectedValue);
+  const filteredOptions = options.filter((option) => {
+    const normalizedSearch = normalizeCityName(search);
+
+    if (!normalizedSearch) {
+      return true;
+    }
+
+    return [option.label, ...(option.keywords ?? [])].some((keyword) =>
+      normalizeCityName(keyword).includes(normalizedSearch),
+    );
+  });
 
   return (
-    <View style={styles.filterGroup}>
-      <Text style={styles.filterLabel}>{label}</Text>
-      <View style={styles.pillRow}>
-        <Pressable
-          onPress={() => onChange(null)}
-          style={[styles.choice, currentValue === null ? styles.choiceSelected : null]}
-        >
-          <Text style={[styles.choiceLabel, currentValue === null ? styles.choiceLabelSelected : null]}>
-            Todas
-          </Text>
-        </Pressable>
-        {values.map((value) => (
-          <Pressable
-            key={value}
-            onPress={() => onChange(value)}
-            style={[styles.choice, currentValue === value ? styles.choiceSelected : null]}
-          >
-            <Text style={[styles.choiceLabel, currentValue === value ? styles.choiceLabelSelected : null]}>
-              {valueLabel(value)}
-            </Text>
-          </Pressable>
-        ))}
-      </View>
+    <>
+      <Pressable
+        accessibilityLabel={`Filtrar por ${label}`}
+        accessibilityRole="button"
+        onPress={() => {
+          setSearch('');
+          setOpen(true);
+        }}
+        style={styles.filterSelect}
+      >
+        <Text numberOfLines={1} style={styles.filterSelectLabel}>
+          {selectedLabel}
+        </Text>
+        <Text style={styles.filterSelectChevron}>⌄</Text>
+      </Pressable>
+      <Modal animationType="fade" onRequestClose={() => setOpen(false)} transparent visible={open}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.filterModalCard}>
+            <Text style={styles.modalTitle}>{label}</Text>
+            {searchable ? (
+              <TextInput
+                autoFocus
+                onChangeText={setSearch}
+                placeholder={`Buscar ${label.toLowerCase()}`}
+                value={search}
+              />
+            ) : null}
+            <ScrollView keyboardShouldPersistTaps="handled" style={styles.filterModalList}>
+              {filteredOptions.map((option) => (
+                <Pressable
+                  accessibilityRole="button"
+                  key={option.value}
+                  onPress={() => {
+                    onSelect(option.value);
+                    setOpen(false);
+                  }}
+                  style={[
+                    styles.filterOption,
+                    selectedValue === option.value ? styles.filterOptionSelected : null,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.filterOptionLabel,
+                      selectedValue === option.value ? styles.filterOptionLabelSelected : null,
+                    ]}
+                  >
+                    {option.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+            <Button onPress={() => setOpen(false)} variant="secondary">
+              Cerrar
+            </Button>
+          </View>
+        </View>
+      </Modal>
+    </>
+  );
+}
+
+function OpportunityListHeader({ count }: { count: number }) {
+  return (
+    <View style={styles.opportunityHeader}>
+      <Text style={styles.opportunityCount}>{count} oportunidades</Text>
     </View>
+  );
+}
+
+function RefreshIconButton({
+  disabled,
+  loading,
+  onRefresh,
+}: {
+  disabled: boolean;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityLabel="Actualizar oportunidades"
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onRefresh}
+      style={[styles.refreshIconButton, disabled ? styles.refreshIconButtonDisabled : null]}
+    >
+      {loading ? (
+        <ActivityIndicator color="#bb5e3c" size="small" />
+      ) : (
+        <Text style={styles.refreshIcon}>↻</Text>
+      )}
+    </Pressable>
   );
 }
 
 function OpportunityListItem({
   application,
+  categoryName,
   opportunity,
 }: {
   application: ProfessionalApplication | null;
+  categoryName: string;
   opportunity: ProfessionalOpportunity;
 }) {
   return (
-    <Pressable onPress={() => router.push(`/(professional)/opportunities/${opportunity.requestId}` as Href)}>
+    <Pressable
+      accessibilityRole="button"
+      onPress={() => router.push(`/(professional)/opportunities/${opportunity.requestId}` as Href)}
+      testID="professional-opportunity-card"
+    >
       <Card>
-        <View style={styles.requestCard}>
-          <Text style={styles.requestTitle}>{opportunity.title}</Text>
-          <Text style={styles.requestMeta}>
-            {opportunity.categoryName ?? 'No estoy seguro del rubro'} · {opportunity.city}
-          </Text>
-          <Text style={styles.requestMeta}>
-            {getServiceRequestUrgencyLabel(opportunity.urgency)} · {getServiceRequestTypeLabel(opportunity.requestType)}
-          </Text>
-          <Text style={styles.requestMeta}>Publicada: {formatDateTime(opportunity.publishedAt)}</Text>
-          {opportunity.preferredDate ? (
-            <Text style={styles.requestMeta}>Fecha preferida: {opportunity.preferredDate}</Text>
-          ) : null}
-          {application ? (
-            <StatusBadge tone="accent" value={`Postulación ${getApplicationStatusLabel(application.status)}`} />
-          ) : null}
+        <View style={styles.opportunityRow}>
+          <View style={styles.opportunityStatusDot} />
+          <View style={styles.opportunityCopy}>
+            <View style={styles.opportunityTitleRow}>
+              <Text numberOfLines={1} style={styles.requestTitle} testID="opportunity-card-title">
+                {opportunity.title}
+              </Text>
+              {application ? (
+                <StatusBadge tone="accent" value={`Postulación ${getApplicationStatusLabel(application.status)}`} />
+              ) : null}
+            </View>
+            <Text numberOfLines={1} style={styles.requestMeta}>
+              {categoryName} · {opportunity.city}
+            </Text>
+            <Text numberOfLines={1} style={styles.requestMeta}>
+              {getServiceRequestUrgencyLabel(opportunity.urgency)} · {getServiceRequestTypeLabel(opportunity.requestType)}
+            </Text>
+            <Text numberOfLines={1} style={styles.requestDescriptionCompact}>
+              {opportunity.description}
+            </Text>
+            <Text numberOfLines={1} style={styles.requestMeta}>
+              Publicada {formatRelativePublishedAt(opportunity.publishedAt)}
+            </Text>
+          </View>
+          <Text style={styles.chevron}>›</Text>
         </View>
       </Card>
     </Pressable>
@@ -1015,10 +1254,153 @@ function updateProfessionalSelectedJobChatCache({
   );
 }
 
-function uniqueValues(values: string[]): string[] {
-  return Array.from(new Set(values.filter((value) => value.trim().length > 0))).sort((left, right) =>
-    left.localeCompare(right),
+
+function dedupeOpportunities(opportunities: ProfessionalOpportunity[]): ProfessionalOpportunity[] {
+  const byRequestId = new Map<string, ProfessionalOpportunity>();
+
+  opportunities.forEach((opportunity) => {
+    const current = byRequestId.get(opportunity.requestId);
+
+    if (!current || compareNullableDates(opportunity.publishedAt, current.publishedAt) > 0) {
+      byRequestId.set(opportunity.requestId, opportunity);
+    }
+  });
+
+  return Array.from(byRequestId.values()).sort((left, right) =>
+    compareNullableDates(right.publishedAt, left.publishedAt),
   );
+}
+
+function compareNullableDates(left: string | null, right: string | null): number {
+  const leftTime = left ? new Date(left).getTime() : 0;
+  const rightTime = right ? new Date(right).getTime() : 0;
+
+  return leftTime - rightTime;
+}
+
+function isOpportunityCompatibleWithProfessional(
+  opportunity: ProfessionalOpportunity,
+  professionalCategoryIds: Set<string>,
+): boolean {
+  if (professionalCategoryIds.size === 0 || !opportunity.categoryId) {
+    return true;
+  }
+
+  return professionalCategoryIds.has(opportunity.categoryId);
+}
+
+function createOpportunityCategoryFilters(categories: Category[]): FilterOption[] {
+  return [
+    { label: 'Todas las categorías', value: 'all' },
+    { label: 'Sin categoría', value: 'uncategorized' },
+    ...categories.map((category) => ({
+      keywords: [category.slug, category.description ?? ''],
+      label: category.name,
+      value: `category:${category.id}`,
+    })),
+  ];
+}
+
+function createCityFilterOptions(opportunities: ProfessionalOpportunity[]): FilterOption[] {
+  const cityOptionsByValue = new Map<string, FilterOption>(
+    BUENOS_AIRES_CITY_OPTIONS.map((option) => [
+      option.value,
+      {
+        keywords: option.aliases,
+        label: option.label,
+        value: option.value,
+      },
+    ]),
+  );
+
+  opportunities.forEach((opportunity) => {
+    const value = getCityFilterValue(opportunity.city);
+
+    if (!cityOptionsByValue.has(value)) {
+      cityOptionsByValue.set(value, {
+        keywords: [opportunity.city],
+        label: opportunity.city,
+        value,
+      });
+    }
+  });
+
+  return [
+    { label: 'Todas las ciudades', value: 'all' },
+    ...Array.from(cityOptionsByValue.values()).sort((left, right) =>
+      left.label.localeCompare(right.label),
+    ),
+  ];
+}
+
+function createUrgencyFilterOptions(): FilterOption[] {
+  return [
+    { label: 'Todas', value: 'all' },
+    ...SERVICE_REQUEST_URGENCIES.map((urgency) => ({
+      label: getServiceRequestUrgencyLabel(urgency),
+      value: urgency,
+    })),
+  ];
+}
+
+function getOptionLabel(options: FilterOption[], value: string): string {
+  return options.find((option) => option.value === value)?.label ?? options[0]?.label ?? '';
+}
+
+function matchesOpportunityCategoryFilter(opportunity: ProfessionalOpportunity, filter: string): boolean {
+  if (filter === 'all') {
+    return true;
+  }
+
+  if (filter === 'uncategorized') {
+    return !opportunity.categoryId;
+  }
+
+  return opportunity.categoryId === filter.replace('category:', '');
+}
+
+function getOpportunityCategoryName(
+  opportunity: ProfessionalOpportunity,
+  categoriesById: Map<string, Category>,
+): string {
+  if (opportunity.categoryName) {
+    return opportunity.categoryName;
+  }
+
+  if (opportunity.categoryId) {
+    return categoriesById.get(opportunity.categoryId)?.name ?? 'Sin categoría definida';
+  }
+
+  return 'Sin categoría definida';
+}
+
+function formatRelativePublishedAt(value: string | null): string {
+  if (!value) {
+    return 'sin fecha';
+  }
+
+  const publishedAt = new Date(value);
+
+  if (Number.isNaN(publishedAt.getTime())) {
+    return 'sin fecha';
+  }
+
+  const diffMs = Date.now() - publishedAt.getTime();
+  const diffDays = Math.max(0, Math.floor(diffMs / 86_400_000));
+
+  if (diffDays === 0) {
+    return 'hoy';
+  }
+
+  if (diffDays === 1) {
+    return 'ayer';
+  }
+
+  if (diffDays < 30) {
+    return `hace ${diffDays} días`;
+  }
+
+  return formatDateTime(value);
 }
 
 function formatDateTime(value: string | null): string {
@@ -1157,6 +1539,145 @@ const styles = StyleSheet.create({
   },
   requestCard: {
     gap: 10,
+  },
+  opportunitiesScrollContent: {
+    gap: 16,
+    paddingBottom: 24,
+  },
+  filterToolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  filterSelect: {
+    minHeight: 40,
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#dccbb1',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 12,
+  },
+  filterSelectLabel: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#1d1811',
+  },
+  filterSelectChevron: {
+    fontSize: 16,
+    color: '#9c8a73',
+  },
+  filterSummary: {
+    fontSize: 13,
+    color: '#675a49',
+  },
+  clearFiltersButton: {
+    alignSelf: 'flex-start',
+  },
+  clearFiltersLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#bb5e3c',
+  },
+  modalOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(29, 24, 17, 0.36)',
+    padding: 20,
+  },
+  filterModalCard: {
+    maxHeight: '78%',
+    gap: 12,
+    borderRadius: 20,
+    backgroundColor: '#fffaf2',
+    padding: 18,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1d1811',
+  },
+  filterModalList: {
+    maxHeight: 360,
+  },
+  filterOption: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#eadcc8',
+    paddingVertical: 13,
+  },
+  filterOptionSelected: {
+    backgroundColor: '#f2ddd1',
+  },
+  filterOptionLabel: {
+    fontSize: 15,
+    color: '#1d1811',
+  },
+  filterOptionLabelSelected: {
+    color: '#bb5e3c',
+    fontWeight: '700',
+  },
+  opportunityHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  opportunityCount: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#675a49',
+  },
+  refreshIconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 999,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#dccbb1',
+    backgroundColor: '#ffffff',
+  },
+  refreshIconButtonDisabled: {
+    opacity: 0.5,
+  },
+  refreshIcon: {
+    fontSize: 22,
+    color: '#bb5e3c',
+    fontWeight: '800',
+  },
+  opportunityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  opportunityStatusDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 999,
+    backgroundColor: '#2f7d57',
+  },
+  opportunityCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  opportunityTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  requestDescriptionCompact: {
+    fontSize: 14,
+    lineHeight: 20,
+    color: '#1d1811',
+  },
+  chevron: {
+    fontSize: 28,
+    lineHeight: 30,
+    color: '#9c8a73',
   },
   requestTitle: {
     fontSize: 18,
