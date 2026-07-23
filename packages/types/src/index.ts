@@ -39,11 +39,32 @@ export type JobStatus =
   | 'diagnosis_pending'
   | 'quote_pending'
   | 'quote_sent'
+  | 'payment_pending'
   | 'quote_accepted'
   | 'quote_rejected'
+  | 'ready_to_start'
+  | 'in_progress'
+  | 'review_pending'
+  | 'completion_pending'
+  | 'completed'
+  | 'disputed'
   | 'cancelled';
 
 export type JobQuoteStatus = 'draft' | 'sent' | 'accepted' | 'rejected' | 'superseded';
+
+export type PaymentStatus =
+  | 'pending'
+  | 'processing'
+  | 'secured'
+  | 'failed'
+  | 'release_pending'
+  | 'released'
+  | 'disputed'
+  | 'refund_pending'
+  | 'refunded'
+  | 'cancelled';
+
+export type JobCompletionMode = 'customer_confirmed' | 'automatic';
 
 export interface Profile {
   id: string;
@@ -192,6 +213,9 @@ export interface CustomerRequestApplication {
   professionalServiceRadiusKm: number;
   professionalVerificationStatus: VerificationStatus;
   professionalCategoryNames: string[];
+  professionalCompletedJobsCount: number;
+  professionalAverageRating: number | null;
+  professionalReviewsCount: number;
 }
 
 export interface CustomerSelectionResult {
@@ -234,8 +258,67 @@ export interface Job {
   materialsNotes?: string | null;
   diagnosisNotes?: string | null;
   diagnosedAt: string | null;
+  startedAt: string | null;
+  completionSummary: string | null;
+  finalNotes: string | null;
+  finalMaterialsNotes: string | null;
+  finalMaterialsAmount: number | null;
+  professionalCompletedAt: string | null;
+  customerConfirmedAt: string | null;
+  disputeReason: string | null;
+  disputeDetails: string | null;
+  disputedAt: string | null;
+  reviewDeadlineAt: string | null;
+  completionMode: JobCompletionMode | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface JobPayment {
+  id: string;
+  jobId: string;
+  quoteId: string;
+  customerId: string;
+  professionalId: string;
+  status: PaymentStatus;
+  provider: 'mock' | string;
+  providerPaymentId: string | null;
+  currency: string;
+  laborAmount: number;
+  visitAmount: number;
+  materialsReferenceAmount: number;
+  platformFeeAmount: number;
+  customerTotalAmount: number;
+  professionalAmount: number;
+  releasedAmount: number | null;
+  failureReason: string | null;
+  paidAt: string | null;
+  securedAt: string | null;
+  releasePendingAt: string | null;
+  releasedAt: string | null;
+  refundedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ReviewRole = 'customer' | 'professional';
+
+export interface JobReview {
+  id: string;
+  jobId: string;
+  reviewerUserId: string;
+  reviewedUserId: string;
+  reviewerRole: ReviewRole;
+  rating: number;
+  comment: string | null;
+  createdAt: string;
+}
+
+export interface ProfessionalPublicMetrics {
+  professionalId: string;
+  completedJobsCount: number;
+  averageRating: number | null;
+  reviewsCount: number;
 }
 
 export interface JobQuote {

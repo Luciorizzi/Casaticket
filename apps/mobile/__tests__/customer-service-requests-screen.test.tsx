@@ -211,6 +211,9 @@ function createCustomerApplication(
     professionalServiceRadiusKm: 20,
     professionalVerificationStatus: 'pending',
     professionalCategoryNames: ['Plomeria'],
+    professionalCompletedJobsCount: 0,
+    professionalAverageRating: null,
+    professionalReviewsCount: 0,
     ...overrides,
   };
 }
@@ -338,7 +341,7 @@ describe('customer service request screens', () => {
     });
 
     expect(screen.getByText('Pro Demo')).toBeTruthy();
-    fireEvent.press(screen.getByText('Ver perfil y propuesta'));
+    fireEvent.press(screen.getByLabelText('Abrir propuesta de Pro Demo'));
 
     await waitFor(() => {
       expect(mockMarkCustomerApplicationViewed.mock.calls[0]?.[0]).toBe('application-1');
@@ -362,7 +365,7 @@ describe('customer service request screens', () => {
     const queryClient = renderWithQueryClient(<CustomerRequestDetailScreen requestId="request-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText('Ver perfil y propuesta')).toBeTruthy();
+      expect(screen.getByLabelText('Abrir propuesta de Pro Demo')).toBeTruthy();
     });
 
     fireEvent.press(screen.getByText('Abrir conversación'));

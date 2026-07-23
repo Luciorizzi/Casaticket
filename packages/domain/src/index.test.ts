@@ -6,6 +6,7 @@ import {
   getApplicationStatusLabel,
   getAvailabilityLabel,
   getConversationStatusLabel,
+  getPaymentStatusLabel,
   getProfileDisplayName,
   getServiceRequestStatusLabel,
   getServiceRequestTypeLabel,
@@ -67,5 +68,13 @@ describe('domain guards', () => {
     expect(hasPotentialContactInfo('Escribime a demo@casaticket.local')).toBe(true);
     expect(hasPotentialContactInfo('Mi telefono es 1122334455')).toBe(true);
     expect(hasPotentialContactInfo('Coordinemos por este chat')).toBe(false);
+  });
+
+  it('returns readable protected payment labels', () => {
+    expect(getPaymentStatusLabel('pending')).toBe('Pendiente de pago');
+    expect(getPaymentStatusLabel('secured')).toBe('Pago protegido');
+    expect(getPaymentStatusLabel('release_pending')).toBe('Pendiente de liberacion');
+    expect(getPaymentStatusLabel('released')).toBe('Pago liberado');
+    expect(getPaymentStatusLabel('refunded')).toBe('Devuelto');
   });
 });

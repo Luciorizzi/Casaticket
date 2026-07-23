@@ -1247,7 +1247,7 @@ async function main() {
     throw new Error('Professional unexpectedly edited a sent quote directly.');
   }
 
-  const foreignCustomerAccept = await bootstrapClient.rpc('accept_job_quote', {
+  const foreignCustomerAccept = await bootstrapClient.rpc('accept_quote_and_create_payment', {
     p_quote_id: firstQuoteRow.id,
   });
 
@@ -1255,7 +1255,7 @@ async function main() {
     throw new Error('Foreign customer unexpectedly accepted a quote.');
   }
 
-  const professionalAccept = await professionalClient.rpc('accept_job_quote', {
+  const professionalAccept = await professionalClient.rpc('accept_quote_and_create_payment', {
     p_quote_id: firstQuoteRow.id,
   });
 
@@ -1321,11 +1321,18 @@ async function main() {
     throw new Error('Professional unexpectedly created a new quote while a sent quote is pending response.');
   }
 
-  const acceptedQuote = await customerClient.rpc('accept_job_quote', {
+  const acceptedQuote = await customerClient.rpc('accept_quote_and_create_payment', {
     p_quote_id: secondQuoteRow.id,
   });
 
-  if (acceptedQuote.error || acceptedQuote.data?.[0]?.job_status !== 'quote_accepted') {
+  const acceptedPaymentId = acceptedQuote.data?.[0]?.payment_id as string | undefined;
+
+  if (
+    acceptedQuote.error ||
+    acceptedQuote.data?.[0]?.job_status !== 'payment_pending' ||
+    acceptedQuote.data?.[0]?.payment_status !== 'pending' ||
+    !acceptedPaymentId
+  ) {
     throw new Error(`Customer could not accept own quote: ${acceptedQuote.error?.message ?? 'unexpected status'}`);
   }
 
@@ -1335,8 +1342,308 @@ async function main() {
     .eq('id', selectedJob.job_id)
     .single();
 
-  if (acceptedJobRead.error || acceptedJobRead.data.status !== 'quote_accepted') {
-    throw new Error(`Job was not marked quote_accepted: ${acceptedJobRead.error?.message ?? 'unexpected status'}`);
+  if (acceptedJobRead.error || acceptedJobRead.data.status !== 'payment_pending') {
+    throw new Error(`Job was not marked payment_pending: ${acceptedJobRead.error?.message ?? 'unexpected status'}`);
+  }
+
+  const createdPaymentRead = await customerClient
+    .from('payments')
+    .select('status, labor_amount, visit_amount, materials_reference_amount, platform_fee_amount, customer_total_amount, professional_amount')
+    .eq('id', acceptedPaymentId)
+    .single();
+
+  if (
+    createdPaymentRead.error ||
+    createdPaymentRead.data.status !== 'pending' ||
+    Number(createdPaymentRead.data.labor_amount) !== 12000 ||
+    Number(createdPaymentRead.data.visit_amount) !== 1500 ||
+    Number(createdPaymentRead.data.materials_reference_amount) !== 3000 ||
+    Number(createdPaymentRead.data.platform_fee_amount) !== 600 ||
+    Number(createdPaymentRead.data.customer_total_amount) !== 14100 ||
+    Number(createdPaymentRead.data.professional_amount) !== 13500
+  ) {
+    throw new Error(`Payment amounts were not calculated correctly: ${createdPaymentRead.error?.message ?? 'unexpected payment'}`);
+  }
+
+  const duplicatePaymentAttempt = await customerClient.rpc('accept_quote_and_create_payment', {
+    p_quote_id: secondQuoteRow.id,
+  });
+
+  if (duplicatePaymentAttempt.error || duplicatePaymentAttempt.data?.[0]?.payment_id !== acceptedPaymentId) {
+    throw new Error('Accepting the same quote did not return the existing payment idempotently.');
+  }
+
+  const foreignCustomerPaymentAttempt = await bootstrapClient.rpc('secure_mock_payment', {
+    p_payment_id: acceptedPaymentId,
+    p_approved: true,
+    p_failure_reason: null,
+  });
+
+  if (!foreignCustomerPaymentAttempt.error) {
+    throw new Error('Foreign customer unexpectedly secured a payment.');
+  }
+
+  const startWithoutPaymentAttempt = await professionalClient.rpc('start_job', {
+    p_job_id: selectedJob.job_id,
+  });
+
+  if (!startWithoutPaymentAttempt.error) {
+    throw new Error('Professional unexpectedly started a job before payment was secured.');
+  }
+
+  const rejectedMockPayment = await customerClient.rpc('secure_mock_payment', {
+    p_payment_id: acceptedPaymentId,
+    p_approved: false,
+    p_failure_reason: 'Tarjeta rechazada en proveedor simulado.',
+  });
+
+  if (rejectedMockPayment.error || rejectedMockPayment.data?.[0]?.status !== 'failed') {
+    throw new Error(`Mock payment rejection failed: ${rejectedMockPayment.error?.message ?? 'unexpected payment'}`);
+  }
+
+  const retryPayment = await customerClient.rpc('retry_mock_payment', {
+    p_payment_id: acceptedPaymentId,
+  });
+
+  if (retryPayment.error || retryPayment.data?.[0]?.status !== 'pending') {
+    throw new Error(`Mock payment retry failed: ${retryPayment.error?.message ?? 'unexpected payment'}`);
+  }
+
+  const securedPayment = await customerClient.rpc('secure_mock_payment', {
+    p_payment_id: acceptedPaymentId,
+    p_approved: true,
+    p_failure_reason: null,
+  });
+
+  if (securedPayment.error || securedPayment.data?.[0]?.status !== 'secured' || !securedPayment.data?.[0]?.secured_at) {
+    throw new Error(`Mock payment approval failed: ${securedPayment.error?.message ?? 'unexpected payment'}`);
+  }
+
+  const securedJobRead = await customerClient
+    .from('jobs')
+    .select('status')
+    .eq('id', selectedJob.job_id)
+    .single();
+
+  if (securedJobRead.error || securedJobRead.data.status !== 'ready_to_start') {
+    throw new Error(`Job was not marked ready_to_start: ${securedJobRead.error?.message ?? 'unexpected status'}`);
+  }
+
+  const foreignProfessionalStartAttempt = await bootstrapProfessionalClient.rpc('start_job', {
+    p_job_id: selectedJob.job_id,
+  });
+
+  if (!foreignProfessionalStartAttempt.error) {
+    throw new Error('Foreign professional unexpectedly started the selected job.');
+  }
+
+  const customerStartAttempt = await customerClient.rpc('start_job', {
+    p_job_id: selectedJob.job_id,
+  });
+
+  if (!customerStartAttempt.error) {
+    throw new Error('Customer unexpectedly started the selected job.');
+  }
+
+  const startedJob = await professionalClient.rpc('start_job', {
+    p_job_id: selectedJob.job_id,
+  });
+
+  if (startedJob.error || startedJob.data?.[0]?.status !== 'in_progress' || !startedJob.data?.[0]?.started_at) {
+    throw new Error(`Selected professional could not start job: ${startedJob.error?.message ?? 'unexpected status'}`);
+  }
+
+  const customerCompletionAttempt = await customerClient.rpc('mark_job_completed_by_professional', {
+    p_job_id: selectedJob.job_id,
+    p_completion_summary: 'Intento de finalizar por parte del cliente con longitud suficiente.',
+    p_final_notes: null,
+    p_final_materials_notes: null,
+    p_final_materials_amount: null,
+  });
+
+  if (!customerCompletionAttempt.error) {
+    throw new Error('Customer unexpectedly marked the job as completed by professional.');
+  }
+
+  const completionByProfessional = await professionalClient.rpc('mark_job_completed_by_professional', {
+    p_job_id: selectedJob.job_id,
+    p_completion_summary: 'Trabajo realizado y verificado con funcionamiento correcto para la solicitud.',
+    p_final_notes: 'Se recomienda revisar nuevamente en treinta dias.',
+    p_final_materials_notes: 'Repuesto principal y sellador.',
+    p_final_materials_amount: 2500,
+  });
+
+  if (
+    completionByProfessional.error ||
+    completionByProfessional.data?.[0]?.status !== 'review_pending' ||
+    completionByProfessional.data?.[0]?.completion_summary !==
+      'Trabajo realizado y verificado con funcionamiento correcto para la solicitud.' ||
+    Number(completionByProfessional.data?.[0]?.final_materials_amount) !== 2500 ||
+    !completionByProfessional.data?.[0]?.professional_completed_at ||
+    !completionByProfessional.data?.[0]?.review_deadline_at
+  ) {
+    throw new Error(
+      `Selected professional could not mark completion: ${completionByProfessional.error?.message ?? 'unexpected status'}`,
+    );
+  }
+
+  const duplicateCompletionAttempt = await professionalClient.rpc('mark_job_completed_by_professional', {
+    p_job_id: selectedJob.job_id,
+    p_completion_summary: 'Segundo intento de finalizar el mismo trabajo, que deberia ser rechazado.',
+    p_final_notes: null,
+    p_final_materials_notes: null,
+    p_final_materials_amount: null,
+  });
+
+  if (!duplicateCompletionAttempt.error) {
+    throw new Error('Professional unexpectedly marked the same job completed twice.');
+  }
+
+  const invalidDisputeAttempt = await customerClient.rpc('dispute_job_completion', {
+    p_job_id: selectedJob.job_id,
+    p_dispute_reason: '',
+    p_dispute_details: 'Detalle suficiente pero sin motivo obligatorio.',
+  });
+
+  if (!invalidDisputeAttempt.error) {
+    throw new Error('Customer unexpectedly disputed completion without a reason.');
+  }
+
+  const prematureReviewAttempt = await customerClient.rpc('create_review', {
+    p_job_id: selectedJob.job_id,
+    p_rating: 5,
+    p_comment: 'Intento antes de finalizar.',
+  });
+
+  if (!prematureReviewAttempt.error) {
+    throw new Error('Customer unexpectedly reviewed before job completion.');
+  }
+
+  const foreignCustomerConfirmAttempt = await bootstrapClient.rpc('confirm_job_completion', {
+    p_job_id: selectedJob.job_id,
+  });
+
+  if (!foreignCustomerConfirmAttempt.error) {
+    throw new Error('Foreign customer unexpectedly confirmed job completion.');
+  }
+
+  const confirmedCompletion = await customerClient.rpc('confirm_job_completion', {
+    p_job_id: selectedJob.job_id,
+  });
+
+  if (
+    confirmedCompletion.error ||
+    confirmedCompletion.data?.[0]?.status !== 'completed' ||
+    confirmedCompletion.data?.[0]?.completion_mode !== 'customer_confirmed' ||
+    !confirmedCompletion.data?.[0]?.customer_confirmed_at
+  ) {
+    throw new Error(`Customer could not confirm job completion: ${confirmedCompletion.error?.message ?? 'unexpected status'}`);
+  }
+
+  const paymentBeforeRelease = await customerClient
+    .from('payments')
+    .select('status')
+    .eq('id', acceptedPaymentId)
+    .single();
+
+  if (paymentBeforeRelease.error || paymentBeforeRelease.data.status !== 'release_pending') {
+    throw new Error(`Payment was not marked release_pending: ${paymentBeforeRelease.error?.message ?? 'unexpected payment'}`);
+  }
+
+  const reviewBeforeReleaseAttempt = await customerClient.rpc('create_review', {
+    p_job_id: selectedJob.job_id,
+    p_rating: 5,
+    p_comment: 'Intento antes de liberar pago.',
+  });
+
+  if (!reviewBeforeReleaseAttempt.error) {
+    throw new Error('Customer unexpectedly reviewed before payment release.');
+  }
+
+  const releasedPayments = await adminClient.rpc('release_eligible_payments');
+
+  if (
+    releasedPayments.error ||
+    releasedPayments.data?.[0]?.id !== acceptedPaymentId ||
+    releasedPayments.data?.[0]?.status !== 'released' ||
+    Number(releasedPayments.data?.[0]?.released_amount) !== 13500
+  ) {
+    throw new Error(`Eligible payment was not released: ${releasedPayments.error?.message ?? 'unexpected payment'}`);
+  }
+
+  const duplicateRelease = await adminClient.rpc('release_eligible_payments');
+
+  if (duplicateRelease.error || (duplicateRelease.data?.length ?? 0) !== 0) {
+    throw new Error('Payment release was not idempotent.');
+  }
+
+  const invalidRatingReview = await customerClient.rpc('create_review', {
+    p_job_id: selectedJob.job_id,
+    p_rating: 6,
+    p_comment: 'Rating fuera de rango.',
+  });
+
+  if (!invalidRatingReview.error) {
+    throw new Error('Database unexpectedly accepted a review rating outside 1-5.');
+  }
+
+  const customerReview = await customerClient.rpc('create_review', {
+    p_job_id: selectedJob.job_id,
+    p_rating: 5,
+    p_comment: 'Trabajo muy prolijo y coordinado dentro de CasaTicket.',
+  });
+
+  if (
+    customerReview.error ||
+    customerReview.data?.[0]?.reviewer_role !== 'customer' ||
+    customerReview.data?.[0]?.reviewer_user_id !== customerId
+  ) {
+    throw new Error(`Customer could not review professional: ${customerReview.error?.message ?? 'unexpected review'}`);
+  }
+
+  const duplicateCustomerReview = await customerClient.rpc('create_review', {
+    p_job_id: selectedJob.job_id,
+    p_rating: 4,
+    p_comment: 'Intento duplicado.',
+  });
+
+  if (!duplicateCustomerReview.error) {
+    throw new Error('Customer unexpectedly created a duplicate job review.');
+  }
+
+  const professionalReview = await professionalClient.rpc('create_review', {
+    p_job_id: selectedJob.job_id,
+    p_rating: 4,
+    p_comment: 'Cliente claro y disponible.',
+  });
+
+  if (
+    professionalReview.error ||
+    professionalReview.data?.[0]?.reviewer_role !== 'professional' ||
+    professionalReview.data?.[0]?.reviewed_user_id !== customerId
+  ) {
+    throw new Error(`Professional could not review customer: ${professionalReview.error?.message ?? 'unexpected review'}`);
+  }
+
+  const professionalMetrics = await customerClient.rpc('get_professional_public_metrics', {
+    p_professional_id: professionalProfile.id,
+  });
+  const professionalMetricsRow = professionalMetrics.data?.[0] as {
+    average_rating: number | string | null;
+    completed_jobs_count: number;
+    reviews_count: number;
+  } | undefined;
+
+  if (
+    professionalMetrics.error ||
+    !professionalMetricsRow ||
+    professionalMetricsRow.completed_jobs_count < 1 ||
+    Number(professionalMetricsRow.average_rating) !== 5 ||
+    professionalMetricsRow.reviews_count < 1
+  ) {
+    throw new Error(
+      `Professional metrics were not calculated correctly: ${professionalMetrics.error?.message ?? 'unexpected metrics'}`,
+    );
   }
 
   const ownApplicationWithdraw = await professionalClient

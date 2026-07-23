@@ -25,7 +25,22 @@ interface JobRow {
   scheduled_time_text: string | null;
   scheduling_notes: string | null;
   diagnosis_text: string | null;
+  recommended_work_text?: string | null;
+  materials_notes?: string | null;
+  diagnosis_notes?: string | null;
   diagnosed_at: string | null;
+  started_at?: string | null;
+  completion_summary?: string | null;
+  final_notes?: string | null;
+  final_materials_notes?: string | null;
+  final_materials_amount?: number | string | null;
+  professional_completed_at?: string | null;
+  customer_confirmed_at?: string | null;
+  dispute_reason?: string | null;
+  dispute_details?: string | null;
+  disputed_at?: string | null;
+  review_deadline_at?: string | null;
+  completion_mode?: Job['completionMode'];
   created_at: string;
   updated_at: string;
 }
@@ -68,7 +83,25 @@ function mapJob(row: JobRow): Job {
     scheduledTimeText: row.scheduled_time_text,
     schedulingNotes: row.scheduling_notes,
     diagnosisText: row.diagnosis_text,
+    recommendedWorkText: row.recommended_work_text ?? null,
+    materialsNotes: row.materials_notes ?? null,
+    diagnosisNotes: row.diagnosis_notes ?? null,
     diagnosedAt: row.diagnosed_at,
+    startedAt: row.started_at ?? null,
+    completionSummary: row.completion_summary ?? null,
+    finalNotes: row.final_notes ?? null,
+    finalMaterialsNotes: row.final_materials_notes ?? null,
+    finalMaterialsAmount:
+      typeof row.final_materials_amount === 'undefined' || row.final_materials_amount === null
+        ? null
+        : mapMoney(row.final_materials_amount),
+    professionalCompletedAt: row.professional_completed_at ?? null,
+    customerConfirmedAt: row.customer_confirmed_at ?? null,
+    disputeReason: row.dispute_reason ?? null,
+    disputeDetails: row.dispute_details ?? null,
+    disputedAt: row.disputed_at ?? null,
+    reviewDeadlineAt: row.review_deadline_at ?? null,
+    completionMode: row.completion_mode ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

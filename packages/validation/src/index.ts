@@ -266,6 +266,30 @@ export const rejectJobQuoteSchema = z.object({
   rejectedReason: optionalShortText(500, 'El motivo de rechazo es demasiado largo.'),
 });
 
+export const completeJobByProfessionalSchema = z.object({
+  completionSummary: requiredText('El resumen del trabajo realizado', 20, 3000),
+  finalNotes: optionalShortText(1000, 'Las observaciones finales son demasiado largas.'),
+  finalMaterialsNotes: optionalShortText(1000, 'Los materiales utilizados son demasiado largos.'),
+  finalMaterialsAmount: optionalNonNegativeNumber,
+});
+
+export const disputeJobCompletionSchema = z.object({
+  disputeReason: requiredText('El motivo del problema', 3, 120),
+  disputeDetails: requiredText('El detalle del problema', 20, 2000),
+});
+
+export const createReviewSchema = z.object({
+  rating: z
+    .number({
+      required_error: 'Elegí una calificación.',
+      invalid_type_error: 'Elegí una calificación válida.',
+    })
+    .int('La calificación debe ser un número entero.')
+    .min(1, 'La calificación mínima es 1.')
+    .max(5, 'La calificación máxima es 5.'),
+  comment: optionalShortText(1000, 'El comentario es demasiado largo.'),
+});
+
 export type RoleSelectionInput = z.infer<typeof roleSelectionSchema>;
 export type SignInInput = z.infer<typeof signInSchema>;
 export type SignUpInput = z.infer<typeof signUpSchema>;
@@ -282,3 +306,6 @@ export type ProposeJobVisitInput = z.infer<typeof proposeJobVisitSchema>;
 export type RecordJobDiagnosisInput = z.infer<typeof recordJobDiagnosisSchema>;
 export type CreateJobQuoteInput = z.infer<typeof createJobQuoteSchema>;
 export type RejectJobQuoteInput = z.infer<typeof rejectJobQuoteSchema>;
+export type CompleteJobByProfessionalInput = z.infer<typeof completeJobByProfessionalSchema>;
+export type DisputeJobCompletionInput = z.infer<typeof disputeJobCompletionSchema>;
+export type CreateReviewInput = z.infer<typeof createReviewSchema>;

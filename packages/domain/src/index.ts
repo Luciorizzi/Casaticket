@@ -6,6 +6,7 @@ import type {
   AvailabilityStatus,
   JobQuoteStatus,
   JobStatus,
+  PaymentStatus,
   Profile,
   SelectableMobileRole,
   ServiceRequestStatus,
@@ -80,8 +81,15 @@ export const JOB_STATUSES = [
   'diagnosis_pending',
   'quote_pending',
   'quote_sent',
+  'payment_pending',
   'quote_accepted',
   'quote_rejected',
+  'ready_to_start',
+  'in_progress',
+  'review_pending',
+  'completion_pending',
+  'completed',
+  'disputed',
   'cancelled',
 ] as const satisfies readonly JobStatus[];
 
@@ -92,6 +100,19 @@ export const JOB_QUOTE_STATUSES = [
   'rejected',
   'superseded',
 ] as const satisfies readonly JobQuoteStatus[];
+
+export const PAYMENT_STATUSES = [
+  'pending',
+  'processing',
+  'secured',
+  'failed',
+  'release_pending',
+  'released',
+  'disputed',
+  'refund_pending',
+  'refunded',
+  'cancelled',
+] as const satisfies readonly PaymentStatus[];
 
 export function isSelectableMobileRole(role: AppRole): role is SelectableMobileRole {
   return MOBILE_SELECTABLE_ROLES.includes(role as SelectableMobileRole);
@@ -222,10 +243,49 @@ export function getJobStatusLabel(status: JobStatus): string {
       return 'Presupuesto pendiente';
     case 'quote_sent':
       return 'Presupuesto enviado';
+    case 'payment_pending':
+      return 'Pago pendiente';
     case 'quote_accepted':
       return 'Presupuesto aceptado';
     case 'quote_rejected':
       return 'Presupuesto rechazado';
+    case 'ready_to_start':
+      return 'Listo para iniciar';
+    case 'in_progress':
+      return 'Trabajo en curso';
+    case 'review_pending':
+      return 'Revision del cliente';
+    case 'completion_pending':
+      return 'Esperando confirmacion';
+    case 'completed':
+      return 'Trabajo completado';
+    case 'disputed':
+      return 'Problema reportado';
+    case 'cancelled':
+      return 'Cancelado';
+  }
+}
+
+export function getPaymentStatusLabel(status: PaymentStatus): string {
+  switch (status) {
+    case 'pending':
+      return 'Pendiente de pago';
+    case 'processing':
+      return 'Procesando';
+    case 'secured':
+      return 'Pago protegido';
+    case 'failed':
+      return 'Pago rechazado';
+    case 'release_pending':
+      return 'Pendiente de liberacion';
+    case 'released':
+      return 'Pago liberado';
+    case 'disputed':
+      return 'En revision';
+    case 'refund_pending':
+      return 'Devolucion pendiente';
+    case 'refunded':
+      return 'Devuelto';
     case 'cancelled':
       return 'Cancelado';
   }

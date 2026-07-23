@@ -1,16 +1,22 @@
-import type { Job, JobQuote } from '@casaticket/types';
+import type { Job, JobPayment, JobQuote, JobReview } from '@casaticket/types';
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
+import { Alert } from 'react-native';
 
 const mockBack = jest.fn();
+const mockCompleteProfessionalJob = jest.fn();
+const mockCreateJobReview = jest.fn();
 const mockCreateProfessionalJobQuote = jest.fn();
+const mockGetJobPayment = jest.fn();
 const mockGetProfessionalJobById = jest.fn();
+const mockListJobReviews = jest.fn();
 const mockListJobQuotes = jest.fn();
 const mockProposeProfessionalJobVisit = jest.fn();
 const mockRecordProfessionalJobDiagnosis = jest.fn();
 const mockSendProfessionalJobQuote = jest.fn();
+const mockStartProfessionalJob = jest.fn();
 let mockDatePickerDate = new Date(2099, 6, 22);
 
 jest.mock('expo-router', () => ({
@@ -34,14 +40,21 @@ jest.mock('@react-native-community/datetimepicker', () => {
 });
 
 jest.mock('@/features/jobs/api', () => ({
+  completeProfessionalJob: (...args: unknown[]) => mockCompleteProfessionalJob(...args),
+  createJobReview: (...args: unknown[]) => mockCreateJobReview(...args),
   createProfessionalJobQuote: (...args: unknown[]) => mockCreateProfessionalJobQuote(...args),
+  getJobPayment: (...args: unknown[]) => mockGetJobPayment(...args),
   getProfessionalJobById: (...args: unknown[]) => mockGetProfessionalJobById(...args),
+  jobPaymentQueryKey: (jobId: string) => ['job-payment', jobId],
   jobQuotesQueryKey: (jobId: string) => ['job-quotes', jobId],
+  jobReviewsQueryKey: (jobId: string) => ['job-reviews', jobId],
+  listJobReviews: (...args: unknown[]) => mockListJobReviews(...args),
   listJobQuotes: (...args: unknown[]) => mockListJobQuotes(...args),
   professionalJobQueryKey: (jobId: string) => ['professional-job', jobId],
   proposeProfessionalJobVisit: (...args: unknown[]) => mockProposeProfessionalJobVisit(...args),
   recordProfessionalJobDiagnosis: (...args: unknown[]) => mockRecordProfessionalJobDiagnosis(...args),
   sendProfessionalJobQuote: (...args: unknown[]) => mockSendProfessionalJobQuote(...args),
+  startProfessionalJob: (...args: unknown[]) => mockStartProfessionalJob(...args),
 }));
 
 import { ProfessionalJobDetailScreen } from '@/features/jobs/professional-job-detail-screen';
@@ -64,6 +77,48 @@ function createJob(overrides: Partial<Job> = {}): Job {
     materialsNotes: null,
     diagnosisNotes: null,
     diagnosedAt: null,
+    startedAt: null,
+    completionSummary: null,
+    finalNotes: null,
+    finalMaterialsNotes: null,
+    finalMaterialsAmount: null,
+    professionalCompletedAt: null,
+    customerConfirmedAt: null,
+    disputeReason: null,
+    disputeDetails: null,
+    disputedAt: null,
+    reviewDeadlineAt: null,
+    completionMode: null,
+    createdAt: '2026-07-21T10:00:00.000Z',
+    updatedAt: '2026-07-21T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function createPayment(overrides: Partial<JobPayment> = {}): JobPayment {
+  return {
+    id: 'payment-1',
+    jobId: 'job-1',
+    quoteId: 'quote-1',
+    customerId: 'customer-1',
+    professionalId: 'professional-1',
+    status: 'secured',
+    provider: 'mock',
+    providerPaymentId: 'mock-payment-1',
+    currency: 'ARS',
+    laborAmount: 10000,
+    visitAmount: 1500,
+    materialsReferenceAmount: 2500,
+    platformFeeAmount: 500,
+    customerTotalAmount: 12000,
+    professionalAmount: 11500,
+    releasedAmount: null,
+    failureReason: null,
+    paidAt: '2026-07-21T10:30:00.000Z',
+    securedAt: '2026-07-21T10:30:00.000Z',
+    releasePendingAt: null,
+    releasedAt: null,
+    refundedAt: null,
     createdAt: '2026-07-21T10:00:00.000Z',
     updatedAt: '2026-07-21T10:00:00.000Z',
     ...overrides,
@@ -94,6 +149,20 @@ function createQuote(overrides: Partial<JobQuote> = {}): JobQuote {
   };
 }
 
+function createReview(overrides: Partial<JobReview> = {}): JobReview {
+  return {
+    id: 'review-1',
+    jobId: 'job-1',
+    reviewerUserId: 'professional-user-1',
+    reviewedUserId: 'customer-1',
+    reviewerRole: 'professional',
+    rating: 5,
+    comment: 'Excelente cliente.',
+    createdAt: '2026-07-21T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
 function renderWithQueryClient(children: ReactNode) {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -116,8 +185,13 @@ function renderWithQueryClient(children: ReactNode) {
 describe('professional job detail screen', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.spyOn(Alert, 'alert').mockImplementation((_title, _message, buttons) => {
+      buttons?.find((button) => button.text !== 'Volver')?.onPress?.();
+    });
     mockDatePickerDate = new Date(2099, 6, 22);
     mockGetProfessionalJobById.mockResolvedValue(createJob());
+    mockGetJobPayment.mockResolvedValue(null);
+    mockListJobReviews.mockResolvedValue([]);
     mockListJobQuotes.mockResolvedValue([]);
     mockProposeProfessionalJobVisit.mockResolvedValue(
       createJob({
@@ -137,6 +211,21 @@ describe('professional job detail screen', () => {
     );
     mockCreateProfessionalJobQuote.mockResolvedValue(createQuote());
     mockSendProfessionalJobQuote.mockResolvedValue(createQuote({ status: 'sent' }));
+    mockStartProfessionalJob.mockResolvedValue(
+      createJob({ startedAt: '2026-07-21T11:00:00.000Z', status: 'in_progress' }),
+    );
+    mockCompleteProfessionalJob.mockResolvedValue(
+      createJob({
+        completionSummary: 'Trabajo realizado y verificado con funcionamiento correcto.',
+        finalMaterialsAmount: 2500,
+        finalMaterialsNotes: 'Repuesto y sellador.',
+        finalNotes: 'Se recomienda revisar en 30 días.',
+        professionalCompletedAt: '2026-07-21T12:00:00.000Z',
+        reviewDeadlineAt: '2026-07-23T12:00:00.000Z',
+        status: 'review_pending',
+      }),
+    );
+    mockCreateJobReview.mockResolvedValue(createReview());
   });
 
   afterEach(() => {
@@ -216,10 +305,16 @@ describe('professional job detail screen', () => {
     ['visit_confirmed', 'Registrar diagnóstico'],
     ['quote_pending', 'Crear presupuesto'],
     ['quote_sent', 'Esperando respuesta del cliente.'],
-    ['quote_accepted', 'El cliente aceptó el presupuesto.'],
+    ['payment_pending', 'Esperando pago protegido del cliente.'],
+    ['ready_to_start', 'Iniciar trabajo'],
+    ['in_progress', 'Marcar trabajo como terminado'],
+    ['review_pending', 'El pago sigue protegido hasta que el cliente confirme o venza la ventana de reclamo.'],
     ['quote_rejected', 'Crear nueva versión'],
   ] as const)('shows the expected action for %s', async (status, expectedText) => {
     mockGetProfessionalJobById.mockResolvedValueOnce(createJob({ status }));
+    if (status === 'ready_to_start') {
+      mockGetJobPayment.mockResolvedValueOnce(createPayment({ status: 'secured' }));
+    }
 
     renderWithQueryClient(<ProfessionalJobDetailScreen jobId="job-1" />);
 
@@ -227,6 +322,94 @@ describe('professional job detail screen', () => {
       expect(screen.queryAllByText(expectedText).length).toBeGreaterThan(0);
       expect(screen.queryByText(status)).toBeNull();
     });
+  });
+
+  it('starts a job only after protected payment is secured', async () => {
+    mockGetProfessionalJobById.mockResolvedValueOnce(createJob({ status: 'ready_to_start' }));
+    mockGetJobPayment.mockResolvedValueOnce(createPayment({ status: 'secured' }));
+    const queryClient = renderWithQueryClient(<ProfessionalJobDetailScreen jobId="job-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Iniciar trabajo')).toBeTruthy();
+    });
+
+    fireEvent.press(screen.getByText('Iniciar trabajo'));
+
+    await waitFor(() => {
+      expect(mockStartProfessionalJob).toHaveBeenCalledWith('job-1');
+    });
+    expect(queryClient.getQueryData(['professional-job', 'job-1'])).toMatchObject({
+      status: 'in_progress',
+    });
+  });
+
+  it('marks an in-progress job as pending customer review', async () => {
+    mockGetProfessionalJobById.mockResolvedValueOnce(createJob({ status: 'in_progress' }));
+    const queryClient = renderWithQueryClient(<ProfessionalJobDetailScreen jobId="job-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Contá qué trabajo realizaste')).toBeTruthy();
+    });
+
+    fireEvent.changeText(
+      screen.getByPlaceholderText('Contá qué trabajo realizaste'),
+      'Trabajo realizado y verificado con funcionamiento correcto.',
+    );
+    fireEvent.changeText(screen.getByPlaceholderText('Observaciones opcionales'), 'Se recomienda revisar en 30 días.');
+    fireEvent.changeText(screen.getByPlaceholderText('Materiales utilizados'), 'Repuesto y sellador.');
+    fireEvent.changeText(screen.getByPlaceholderText('Importe informativo'), '2500');
+    fireEvent.press(screen.getAllByText('Marcar trabajo como terminado').at(-1)!);
+
+    await waitFor(() => {
+      expect(mockCompleteProfessionalJob).toHaveBeenCalledWith('job-1', {
+        completionSummary: 'Trabajo realizado y verificado con funcionamiento correcto.',
+        finalMaterialsAmount: 2500,
+        finalMaterialsNotes: 'Repuesto y sellador.',
+        finalNotes: 'Se recomienda revisar en 30 días.',
+      });
+    });
+    expect(queryClient.getQueryData(['professional-job', 'job-1'])).toMatchObject({
+      status: 'review_pending',
+    });
+  });
+
+  it('validates completion summary before submitting', async () => {
+    mockGetProfessionalJobById.mockResolvedValueOnce(createJob({ status: 'in_progress' }));
+    renderWithQueryClient(<ProfessionalJobDetailScreen jobId="job-1" />);
+
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('Contá qué trabajo realizaste')).toBeTruthy();
+    });
+
+    fireEvent.changeText(screen.getByPlaceholderText('Contá qué trabajo realizaste'), 'Corto');
+    fireEvent.press(screen.getAllByText('Marcar trabajo como terminado').at(-1)!);
+
+    expect(screen.getByText('El resumen debe tener al menos 20 caracteres.')).toBeTruthy();
+    expect(mockCompleteProfessionalJob).not.toHaveBeenCalled();
+  });
+
+  it('creates a professional review after completion', async () => {
+    mockGetProfessionalJobById.mockResolvedValueOnce(createJob({ status: 'completed' }));
+    mockGetJobPayment.mockResolvedValueOnce(createPayment({ releasedAt: '2026-07-21T14:00:00.000Z', status: 'released' }));
+    const queryClient = renderWithQueryClient(<ProfessionalJobDetailScreen jobId="job-1" />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('Calificar cliente').length).toBeGreaterThan(0);
+    });
+
+    fireEvent.changeText(screen.getByPlaceholderText('1 a 5'), '5');
+    fireEvent.changeText(screen.getByPlaceholderText('Comentario opcional'), 'Excelente cliente.');
+    fireEvent.press(screen.getAllByText('Calificar cliente').at(-1)!);
+
+    await waitFor(() => {
+      expect(mockCreateJobReview).toHaveBeenCalledWith('job-1', {
+        comment: 'Excelente cliente.',
+        rating: 5,
+      });
+    });
+    expect(queryClient.getQueryData(['job-reviews', 'job-1'])).toMatchObject([
+      { reviewerRole: 'professional', rating: 5 },
+    ]);
   });
 
   it('records diagnosis and moves the job to quote pending', async () => {
@@ -311,8 +494,8 @@ describe('professional job detail screen', () => {
     });
     await waitFor(() => {
       expect(screen.queryAllByText('Presupuesto enviado').length).toBeGreaterThan(0);
-      expect(screen.getByText('Total del servicio')).toBeTruthy();
-      expect(screen.getByText('$ 12.000')).toBeTruthy();
+      expect(screen.getByText(/v1 · Enviado/)).toBeTruthy();
+      expect(screen.queryByText('Total del servicio')).toBeNull();
     });
   });
 });

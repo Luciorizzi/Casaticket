@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { router } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
+import { Alert, StyleSheet, Text, View } from 'react-native';
 import { ZodError } from 'zod';
 
-import { getJobQuoteStatusLabel } from '@casaticket/domain';
-import type { Job, JobQuote } from '@casaticket/types';
+import { getJobQuoteStatusLabel, getPaymentStatusLabel } from '@casaticket/domain';
+import type { Job, JobPayment, JobQuote, JobReview } from '@casaticket/types';
 import type {
   CreateJobQuoteInput,
+  CreateReviewInput,
+  CompleteJobByProfessionalInput,
   ProposeJobVisitInput,
   RecordJobDiagnosisInput,
 } from '@casaticket/validation';
@@ -20,22 +22,23 @@ import { LoadingState } from '@/components/ui/loading-state';
 import { Screen } from '@/components/ui/screen';
 import { TextInput } from '@/components/ui/text-input';
 import { colors } from '@/components/ui/theme';
+import { JobProgressList, type JobProgressRowItem, type JobProgressRowState } from '@/features/jobs/job-progress-list';
 import {
-  CollapsibleSection,
-  InfoRow,
-  ProcessTimeline,
-  SectionCard,
-  StatusHeader,
-} from '@/components/ui/workflow';
-import {
+  completeProfessionalJob,
+  createJobReview,
   createProfessionalJobQuote,
+  getJobPayment,
   getProfessionalJobById,
+  jobPaymentQueryKey,
   jobQuotesQueryKey,
+  jobReviewsQueryKey,
+  listJobReviews,
   listJobQuotes,
   professionalJobQueryKey,
   proposeProfessionalJobVisit,
   recordProfessionalJobDiagnosis,
   sendProfessionalJobQuote,
+  startProfessionalJob,
 } from '@/features/jobs/api';
 import { DatePickerField } from '@/features/jobs/date-picker-field';
 import { getMobileJobStatusLabel } from '@/features/jobs/status-labels';
@@ -65,13 +68,8 @@ function getSubmissionErrorMessage(error: unknown, fallback: string): string {
   return getUserFacingErrorMessage(error, fallback);
 }
 
-const timelineSteps = [
-  { key: 'selected', label: 'Profesional' },
-  { key: 'visit', label: 'Visita' },
-  { key: 'diagnosis', label: 'Diagnóstico' },
-  { key: 'quote', label: 'Presupuesto' },
-  { key: 'accepted', label: 'Aceptado' },
-];
+const progressStepOrder = ['selected', 'visit', 'diagnosis', 'quote', 'payment', 'execution', 'completed'] as const;
+type ProgressStep = (typeof progressStepOrder)[number];
 
 function getTimelineStep(status: Job['status']): string {
   switch (status) {
@@ -86,32 +84,19 @@ function getTimelineStep(status: Job['status']): string {
     case 'quote_sent':
     case 'quote_rejected':
       return 'quote';
+    case 'payment_pending':
+      return 'payment';
     case 'quote_accepted':
-      return 'accepted';
+    case 'ready_to_start':
+    case 'in_progress':
+    case 'review_pending':
+    case 'completion_pending':
+      return 'execution';
+    case 'completed':
+    case 'disputed':
+      return 'completed';
     case 'cancelled':
       return 'selected';
-  }
-}
-
-function getProfessionalNextAction(status: Job['status']): string {
-  switch (status) {
-    case 'coordination_pending':
-      return 'Proponer visita';
-    case 'visit_proposed':
-      return 'Esperar confirmación';
-    case 'visit_confirmed':
-    case 'diagnosis_pending':
-      return 'Registrar diagnóstico';
-    case 'quote_pending':
-      return 'Crear presupuesto';
-    case 'quote_sent':
-      return 'Esperar respuesta del cliente';
-    case 'quote_rejected':
-      return 'Crear nueva versión';
-    case 'quote_accepted':
-      return 'Presupuesto aceptado';
-    case 'cancelled':
-      return 'Trabajo cancelado';
   }
 }
 
@@ -121,6 +106,161 @@ function shortText(value: string, maxLength: number): string {
   }
 
   return `${value.slice(0, maxLength).trim()}…`;
+}
+
+function formatDateShort(value: string | null): string {
+  if (!value) {
+    return 'Sin fecha';
+  }
+
+  return new Intl.DateTimeFormat('es-AR', {
+    day: 'numeric',
+    month: 'short',
+  }).format(new Date(`${value}T12:00:00`));
+}
+
+function getProgressRowState(step: ProgressStep, status: Job['status']): JobProgressRowState {
+  if (status === 'disputed' && step === 'completed') {
+    return 'warning';
+  }
+
+  const currentIndex = progressStepOrder.indexOf(getTimelineStep(status) as ProgressStep);
+  const stepIndex = progressStepOrder.indexOf(step);
+
+  if (stepIndex < currentIndex) {
+    return 'done';
+  }
+
+  if (stepIndex === currentIndex) {
+    return 'active';
+  }
+
+  return 'pending';
+}
+
+function getVisitSubtitle(job: Job): string {
+  const status = job.status === 'visit_confirmed' || job.status === 'diagnosis_pending' ? 'Confirmada' : 'Pendiente';
+  return `${formatDateShort(job.scheduledDate)} · ${job.scheduledTimeText ?? 'Sin horario'} · ${status}`;
+}
+
+function getDiagnosisSubtitle(job: Job): string {
+  if (job.recommendedWorkText) {
+    return shortText(job.recommendedWorkText, 46);
+  }
+
+  if (job.diagnosisText) {
+    return shortText(job.diagnosisText, 46);
+  }
+
+  return getTimelineStep(job.status) === 'diagnosis' ? 'Pendiente de diagnóstico' : 'A confirmar';
+}
+
+function getQuoteSubtitle(quote: JobQuote | null): string {
+  if (!quote) {
+    return 'Sin presupuesto';
+  }
+
+  return `v${quote.version} · ${getJobQuoteStatusLabel(quote.status)} · ${formatMoney(quote.totalAmount)}`;
+}
+
+function getPaymentSubtitle(payment: JobPayment | null, job: Job): string {
+  if (payment) {
+    if (payment.status === 'failed') {
+      return 'Pendiente de pago';
+    }
+
+    return getPaymentStatusLabel(payment.status);
+  }
+
+  return job.status === 'payment_pending' ? 'Pendiente de pago' : 'A confirmar';
+}
+
+function getExecutionSubtitle(job: Job): string {
+  switch (job.status) {
+    case 'in_progress':
+      return 'Trabajo en curso';
+    case 'review_pending':
+    case 'completion_pending':
+      return 'Trabajo finalizado por el profesional';
+    case 'completed':
+      return 'Trabajo completado';
+    case 'disputed':
+      return 'Problema reportado';
+    case 'quote_accepted':
+    case 'ready_to_start':
+      return 'Listo para iniciar';
+    default:
+      return 'Pendiente';
+  }
+}
+
+function getFinalizationSubtitle(job: Job): string {
+  switch (job.status) {
+    case 'review_pending':
+    case 'completion_pending':
+      return 'Pendiente de confirmación';
+    case 'completed':
+      return 'Trabajo confirmado';
+    case 'disputed':
+      return 'Problema reportado';
+    default:
+      return 'Pendiente';
+  }
+}
+
+function createProfessionalProgressRows({
+  job,
+  payment,
+  quote,
+}: {
+  job: Job;
+  payment: JobPayment | null;
+  quote: JobQuote | null;
+}): JobProgressRowItem[] {
+  return [
+    {
+      id: 'selected',
+      state: getProgressRowState('selected', job.status),
+      subtitle: 'Trabajo seleccionado',
+      title: 'Profesional',
+    },
+    {
+      id: 'visit',
+      state: getProgressRowState('visit', job.status),
+      subtitle: getVisitSubtitle(job),
+      title: 'Visita',
+    },
+    {
+      id: 'diagnosis',
+      state: getProgressRowState('diagnosis', job.status),
+      subtitle: getDiagnosisSubtitle(job),
+      title: 'Diagnóstico',
+    },
+    {
+      id: 'quote',
+      state: getProgressRowState('quote', job.status),
+      subtitle: getQuoteSubtitle(quote),
+      title: 'Presupuesto',
+    },
+    {
+      id: 'payment',
+      state: getProgressRowState('payment', job.status),
+      subtitle: getPaymentSubtitle(payment, job),
+      title: 'Pago',
+    },
+    {
+      id: 'execution',
+      state: getProgressRowState('execution', job.status),
+      subtitle: getExecutionSubtitle(job),
+      title: 'Ejecución',
+    },
+    {
+      id: 'completed',
+      state: getProgressRowState('completed', job.status),
+      subtitle: getFinalizationSubtitle(job),
+      title: 'Finalización',
+    },
+  ];
 }
 
 export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
@@ -135,6 +275,16 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
   const quotesQuery = useQuery({
     queryKey: job ? jobQuotesQueryKey(job.id) : jobQuotesQueryKey(jobId || 'pending'),
     queryFn: () => listJobQuotes(job?.id ?? ''),
+    enabled: Boolean(job),
+  });
+  const paymentQuery = useQuery({
+    queryKey: job ? jobPaymentQueryKey(job.id) : jobPaymentQueryKey(jobId || 'pending'),
+    queryFn: () => getJobPayment(job?.id ?? ''),
+    enabled: Boolean(job),
+  });
+  const reviewsQuery = useQuery({
+    queryKey: job ? jobReviewsQueryKey(job.id) : jobReviewsQueryKey(jobId || 'pending'),
+    queryFn: () => listJobReviews(job?.id ?? ''),
     enabled: Boolean(job),
   });
 
@@ -188,6 +338,23 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
       }
     },
   });
+  const startJobMutation = useMutation({
+    mutationFn: () => startProfessionalJob(jobId),
+    onSuccess: setJob,
+  });
+  const completeJobMutation = useMutation({
+    mutationFn: (values: CompleteJobByProfessionalInput) => completeProfessionalJob(jobId, values),
+    onSuccess: setJob,
+  });
+  const reviewMutation = useMutation({
+    mutationFn: (values: CreateReviewInput) => createJobReview(jobId, values),
+    onSuccess: (review) => {
+      queryClient.setQueryData<JobReview[]>(jobReviewsQueryKey(review.jobId), (currentReviews = []) => [
+        ...currentReviews.filter((currentReview) => currentReview.id !== review.id),
+        review,
+      ]);
+    },
+  });
 
   if (!jobId) {
     return (
@@ -217,8 +384,11 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
   }
 
   const quotes = quotesQuery.data ?? [];
+  const reviews = reviewsQuery.data ?? [];
   const latestQuote = quotes[0] ?? null;
   const draftQuote = quotes.find((quote) => quote.status === 'draft') ?? null;
+  const payment = paymentQuery.data ?? null;
+  const hasProfessionalReview = reviews.some((review) => review.reviewerRole === 'professional');
 
   return (
     <Screen
@@ -230,9 +400,9 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
       subtitle={`Estado: ${getMobileJobStatusLabel(job.status)}`}
       title="Gestionar trabajo"
     >
-      <JobSummaryCard job={job} />
+      <JobSummaryCard job={job} payment={payment} quote={latestQuote} />
       {quotesQuery.isPending ? <LoadingState message="Cargando presupuestos..." /> : null}
-      {latestQuote ? <QuoteSummaryCard quote={latestQuote} /> : null}
+      {paymentQuery.isPending && job.status !== 'quote_sent' ? <LoadingState message="Cargando pago..." /> : null}
       {formError ? <Text style={styles.error}>{formError}</Text> : null}
       <JobStatusActions
         draftQuote={draftQuote}
@@ -241,8 +411,13 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
           diagnosisMutation.isPending ||
           createQuoteMutation.isPending ||
           sendQuoteMutation.isPending
+          || startJobMutation.isPending
+          || completeJobMutation.isPending
+          || reviewMutation.isPending
         }
         job={job}
+        hasProfessionalReview={hasProfessionalReview}
+        payment={payment}
         onCreateQuote={async (values) => {
           setFormError(null);
 
@@ -261,6 +436,16 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
           } catch (error) {
             logDevelopmentSupabaseError('professional-job:propose-visit-form', error);
             setFormError(getSubmissionErrorMessage(error, 'No pudimos proponer la visita.'));
+          }
+        }}
+        onReview={async (values) => {
+          setFormError(null);
+
+          try {
+            await reviewMutation.mutateAsync(values);
+          } catch (error) {
+            logDevelopmentSupabaseError('professional-job:create-review-form', error);
+            setFormError(getSubmissionErrorMessage(error, 'No pudimos guardar la calificación.'));
           }
         }}
         onRecordDiagnosis={async (values) => {
@@ -283,6 +468,31 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
             setFormError(getSubmissionErrorMessage(error, 'No pudimos enviar el presupuesto.'));
           }
         }}
+        onStartJob={async () => {
+          setFormError(null);
+
+          Alert.alert('Iniciar trabajo', 'Confirmá que vas a comenzar la ejecución del trabajo.', [
+            { style: 'cancel', text: 'Volver' },
+            {
+              onPress: () =>
+                void startJobMutation.mutateAsync().catch((error) => {
+                  logDevelopmentSupabaseError('professional-job:start-form', error);
+                  setFormError(getSubmissionErrorMessage(error, 'No pudimos iniciar el trabajo.'));
+                }),
+              text: 'Iniciar trabajo',
+            },
+          ]);
+        }}
+        onSubmitCompletion={async (values) => {
+          setFormError(null);
+
+          try {
+            await completeJobMutation.mutateAsync(values);
+          } catch (error) {
+            logDevelopmentSupabaseError('professional-job:complete-form', error);
+            setFormError(getSubmissionErrorMessage(error, 'No pudimos marcar el trabajo como terminado.'));
+          }
+        }}
       />
       {quotes.length === 0 ? (
         <EmptyState
@@ -295,57 +505,36 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
   );
 }
 
-function JobSummaryCard({ job }: { job: Job }) {
-  return (
-    <>
-      <SectionCard title="Trabajo seleccionado">
-        <StatusHeader
-          actionLabel={getProfessionalNextAction(job.status)}
-          description="Avanzá el trabajo según el estado actual."
-          status={getMobileJobStatusLabel(job.status)}
-          tone={job.status === 'quote_accepted' ? 'success' : 'accent'}
-        />
-        <ProcessTimeline currentStep={getTimelineStep(job.status)} steps={timelineSteps} />
-      </SectionCard>
-      <CollapsibleSection
-        preview={`${job.scheduledDate ?? 'Sin fecha'} · ${job.scheduledTimeText ?? 'Sin horario'}`}
-        title="Coordinación"
-      >
-        <InfoRow label="Fecha propuesta" value={job.scheduledDate ?? 'Sin propuesta'} />
-        <InfoRow label="Horario" value={job.scheduledTimeText ?? 'Sin horario'} />
-        <InfoRow label="Notas" value={job.schedulingNotes ?? 'Sin notas'} />
-      </CollapsibleSection>
-      {job.diagnosisText ? (
-        <CollapsibleSection
-          preview={shortText(job.diagnosisText, 90)}
-          title="Diagnóstico"
-        >
-          <InfoRow label="Problema detectado" value={job.diagnosisText} />
-          <InfoRow label="Trabajo recomendado" value={job.recommendedWorkText ?? 'Sin recomendación'} />
-          <InfoRow label="Materiales" value={job.materialsNotes ?? 'Sin observaciones'} />
-          {job.diagnosisNotes ? <InfoRow label="Notas internas" value={job.diagnosisNotes} /> : null}
-        </CollapsibleSection>
-      ) : null}
-    </>
-  );
+function JobSummaryCard({ job, payment, quote }: { job: Job; payment: JobPayment | null; quote: JobQuote | null }) {
+  return <JobProgressList rows={createProfessionalProgressRows({ job, payment, quote })} />;
 }
 
 function JobStatusActions({
   draftQuote,
   isPending,
   job,
+  hasProfessionalReview,
   onCreateQuote,
   onProposeVisit,
+  onReview,
   onRecordDiagnosis,
   onSendQuote,
+  onStartJob,
+  onSubmitCompletion,
+  payment,
 }: {
   draftQuote: JobQuote | null;
+  hasProfessionalReview: boolean;
   isPending: boolean;
   job: Job;
   onCreateQuote: (values: CreateJobQuoteInput) => Promise<void>;
   onProposeVisit: (values: ProposeJobVisitInput) => Promise<void>;
+  onReview: (values: CreateReviewInput) => Promise<void>;
   onRecordDiagnosis: (values: RecordJobDiagnosisInput) => Promise<void>;
   onSendQuote: (quoteId: string) => Promise<void>;
+  onStartJob: () => Promise<void>;
+  onSubmitCompletion: (values: CompleteJobByProfessionalInput) => Promise<void>;
+  payment: JobPayment | null;
 }) {
   if (job.status === 'coordination_pending') {
     return <ProposeVisitForm loading={isPending} onSubmit={onProposeVisit} />;
@@ -386,12 +575,72 @@ function JobStatusActions({
     return <ReadOnlyStatus title="Presupuesto enviado" message="Esperando respuesta del cliente." />;
   }
 
-  if (job.status === 'quote_accepted') {
-    return <ReadOnlyStatus title="Presupuesto aceptado" message="El cliente aceptó el presupuesto." />;
+  if (job.status === 'payment_pending' || job.status === 'quote_accepted') {
+    return <ReadOnlyStatus title="Esperando pago protegido" message="Esperando pago protegido del cliente." />;
+  }
+
+  if (job.status === 'ready_to_start') {
+    return (
+      <Card>
+        <View style={styles.stack}>
+          <Text style={styles.title}>Pago asegurado</Text>
+          <Text style={styles.meta}>Pago asegurado. Ya podés iniciar el trabajo.</Text>
+          {payment ? (
+            <>
+              <Text style={styles.meta}>Monto estimado a recibir: {formatMoney(payment.professionalAmount)}</Text>
+              <Text style={styles.meta}>Comisión CasaTicket: {formatMoney(payment.platformFeeAmount)}</Text>
+              <Text style={styles.meta}>Estado de liberación: {getPaymentStatusLabel(payment.status)}</Text>
+            </>
+          ) : null}
+          <Button disabled={isPending} onPress={() => void onStartJob()}>
+            {isPending ? 'Iniciando...' : 'Iniciar trabajo'}
+          </Button>
+        </View>
+      </Card>
+    );
   }
 
   if (job.status === 'quote_rejected') {
     return <QuoteForm loading={isPending} onSubmit={onCreateQuote} title="Crear nueva versión" />;
+  }
+
+  if (job.status === 'in_progress') {
+    return <CompleteJobForm loading={isPending} onSubmit={onSubmitCompletion} />;
+  }
+
+  if (job.status === 'review_pending' || job.status === 'completion_pending') {
+    return (
+      <ReadOnlyStatus
+        title="Revisión del cliente"
+        message="El pago sigue protegido hasta que el cliente confirme o venza la ventana de reclamo."
+      />
+    );
+  }
+
+  if (job.status === 'completed') {
+    if (payment?.status !== 'released') {
+      return (
+        <ReadOnlyStatus
+          title="Pago pendiente de liberación"
+          message="Vas a poder calificar cuando el pago esté liberado."
+        />
+      );
+    }
+
+    if (hasProfessionalReview) {
+      return <ReadOnlyStatus title="Calificación enviada" message="Ya calificaste a este cliente." />;
+    }
+
+    return <ReviewForm loading={isPending} onSubmit={onReview} title="Calificar cliente" />;
+  }
+
+  if (job.status === 'disputed') {
+    return (
+      <ReadOnlyStatus
+        title="Problema reportado"
+        message="El cliente reportó un problema. El historial queda visible para seguimiento."
+      />
+    );
   }
 
   return <ReadOnlyStatus title="Trabajo cancelado" message="Este trabajo ya no admite acciones." />;
@@ -403,6 +652,83 @@ function ReadOnlyStatus({ message, title }: { message: string; title: string }) 
       <View style={styles.stack}>
         <Text style={styles.title}>{title}</Text>
         <Text style={styles.meta}>{message}</Text>
+      </View>
+    </Card>
+  );
+}
+
+function CompleteJobForm({
+  loading,
+  onSubmit,
+}: {
+  loading: boolean;
+  onSubmit: (values: CompleteJobByProfessionalInput) => Promise<void>;
+}) {
+  const [completionSummary, setCompletionSummary] = useState('');
+  const [finalNotes, setFinalNotes] = useState('');
+  const [finalMaterialsNotes, setFinalMaterialsNotes] = useState('');
+  const [finalMaterialsAmount, setFinalMaterialsAmount] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const submit = async () => {
+    const materialsAmount = finalMaterialsAmount.trim() ? Number(finalMaterialsAmount) : null;
+    const payload = {
+      completionSummary: completionSummary.trim(),
+      finalMaterialsAmount: materialsAmount,
+      finalMaterialsNotes: finalMaterialsNotes.trim() || null,
+      finalNotes: finalNotes.trim() || null,
+    };
+    setValidationError(null);
+
+    if (payload.completionSummary.length < 20) {
+      setValidationError('El resumen debe tener al menos 20 caracteres.');
+      return;
+    }
+
+    if (materialsAmount !== null && (!Number.isFinite(materialsAmount) || materialsAmount < 0)) {
+      setValidationError('El importe final de materiales debe ser válido.');
+      return;
+    }
+
+    await onSubmit(payload);
+  };
+
+  return (
+    <Card>
+      <View style={styles.stack}>
+        <Text style={styles.title}>Marcar trabajo como terminado</Text>
+        <Text style={styles.label}>Resumen del trabajo realizado</Text>
+        <TextInput
+          multiline
+          onChangeText={setCompletionSummary}
+          placeholder="Contá qué trabajo realizaste"
+          value={completionSummary}
+        />
+        <Text style={styles.label}>Observaciones finales</Text>
+        <TextInput
+          multiline
+          onChangeText={setFinalNotes}
+          placeholder="Observaciones opcionales"
+          value={finalNotes}
+        />
+        <Text style={styles.label}>Materiales realmente utilizados</Text>
+        <TextInput
+          multiline
+          onChangeText={setFinalMaterialsNotes}
+          placeholder="Materiales utilizados"
+          value={finalMaterialsNotes}
+        />
+        <Text style={styles.label}>Importe final de materiales</Text>
+        <TextInput
+          keyboardType="numeric"
+          onChangeText={setFinalMaterialsAmount}
+          placeholder="Importe informativo"
+          value={finalMaterialsAmount}
+        />
+        {validationError ? <Text style={styles.error}>{validationError}</Text> : null}
+        <Button disabled={loading} onPress={() => void submit()}>
+          {loading ? 'Guardando...' : 'Marcar trabajo como terminado'}
+        </Button>
       </View>
     </Card>
   );
@@ -646,34 +972,49 @@ function QuoteForm({
   );
 }
 
-function QuoteSummaryCard({ quote }: { quote: JobQuote }) {
-  const rows = useMemo(
-    () => [
-      { label: 'Mano de obra', amount: quote.laborAmount },
-      { label: 'Materiales aproximados', amount: quote.materialsAmount },
-      { label: 'Visita', amount: quote.visitAmount },
-      { label: 'Comisión CasaTicket (5%)', amount: quote.platformFeeAmount },
-    ],
-    [quote],
-  );
+function ReviewForm({
+  loading,
+  onSubmit,
+  title,
+}: {
+  loading: boolean;
+  onSubmit: (values: CreateReviewInput) => Promise<void>;
+  title: string;
+}) {
+  const [rating, setRating] = useState('');
+  const [comment, setComment] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const submit = async () => {
+    const numericRating = Number(rating);
+    const payload = {
+      comment: comment.trim() || null,
+      rating: numericRating,
+    };
+    setValidationError(null);
+
+    if (!Number.isInteger(numericRating) || numericRating < 1 || numericRating > 5) {
+      setValidationError('Elegí una calificación entre 1 y 5.');
+      return;
+    }
+
+    await onSubmit(payload);
+  };
 
   return (
-    <CollapsibleSection
-      initiallyExpanded={quote.status === 'draft'}
-      preview={`v${quote.version} · ${getJobQuoteStatusLabel(quote.status)} · ${formatMoney(quote.totalAmount)}`}
-      title="Presupuesto"
-    >
-      <Text numberOfLines={2} style={styles.body}>{quote.description}</Text>
-      {rows.map((row) => (
-        <InfoRow key={row.label} label={row.label} value={formatMoney(row.amount)} />
-      ))}
-      <Text style={styles.meta}>Materiales no incluidos en el total final.</Text>
-      <InfoRow label="Total del servicio" value={formatMoney(quote.totalAmount)} />
-      <InfoRow label="Estado" value={getJobQuoteStatusLabel(quote.status)} />
-      <InfoRow label="Vigencia" value={quote.validUntil ?? 'Sin vencimiento'} />
-      <InfoRow label="Duración" value={quote.estimatedDurationText ?? 'Sin estimación'} />
-      {quote.rejectedReason ? <InfoRow label="Motivo rechazo" value={quote.rejectedReason} /> : null}
-    </CollapsibleSection>
+    <Card>
+      <View style={styles.stack}>
+        <Text style={styles.title}>{title}</Text>
+        <Text style={styles.label}>Calificación general</Text>
+        <TextInput keyboardType="numeric" onChangeText={setRating} placeholder="1 a 5" value={rating} />
+        <Text style={styles.label}>Comentario opcional</Text>
+        <TextInput multiline onChangeText={setComment} placeholder="Comentario opcional" value={comment} />
+        {validationError ? <Text style={styles.error}>{validationError}</Text> : null}
+        <Button disabled={loading} onPress={() => void submit()}>
+          {loading ? 'Guardando...' : title}
+        </Button>
+      </View>
+    </Card>
   );
 }
 

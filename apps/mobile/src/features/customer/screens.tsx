@@ -677,6 +677,15 @@ export function CustomerApplicationDetailScreen({
           label="Verificación"
           value={getVerificationLabel(application.professionalVerificationStatus)}
         />
+        <InfoRow label="Trabajos completados" value={`${application.professionalCompletedJobsCount}`} />
+        <InfoRow
+          label="Calificación"
+          value={
+            application.professionalAverageRating === null
+              ? 'Sin calificaciones'
+              : `${application.professionalAverageRating.toFixed(1)} (${application.professionalReviewsCount})`
+          }
+        />
         <InfoRow label="Bio" value={application.professionalBio ?? 'Este profesional todavía no cargó una bio.'} />
       </SectionCard>
       <SectionCard title="Propuesta">
@@ -975,7 +984,12 @@ function CustomerApplicationCard({
 }) {
   return (
     <View style={styles.applicationCard}>
-      <Pressable onPress={onOpen} style={styles.applicationHeader}>
+      <Pressable
+        accessibilityLabel={`Abrir propuesta de ${getProfessionalDisplayName(application)}`}
+        accessibilityRole="button"
+        onPress={onOpen}
+        style={styles.applicationHeader}
+      >
         <View style={styles.copy}>
           <Text style={styles.requestTitle}>{getProfessionalDisplayName(application)}</Text>
           {application.unreadCount > 0 ? (
@@ -989,7 +1003,10 @@ function CustomerApplicationCard({
             Verificación: {getVerificationLabel(application.professionalVerificationStatus)}
           </Text>
         </View>
-        <StatusBadge tone={getApplicationStatusTone(application.status)} value={getCustomerApplicationStatusLabel(application.status)} />
+        <View style={styles.compactTrailing}>
+          <StatusBadge tone={getApplicationStatusTone(application.status)} value={getCustomerApplicationStatusLabel(application.status)} />
+          <Text style={styles.chevron}>›</Text>
+        </View>
       </Pressable>
 
       <ConversationSummary
@@ -1000,11 +1017,6 @@ function CustomerApplicationCard({
 
       <PrimaryActionBar
         primaryAction={
-          <Button onPress={onOpen} variant="secondary">
-            Ver perfil y propuesta
-          </Button>
-        }
-        secondaryAction={
           <Button onPress={onOpenChat} variant="secondary">
             Abrir conversación
           </Button>
@@ -1251,6 +1263,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 12,
+  },
+  compactTrailing: {
+    alignItems: 'flex-end',
+    gap: 6,
+  },
+  chevron: {
+    color: '#675a49',
+    fontSize: 26,
+    fontWeight: '500',
+    lineHeight: 28,
   },
   applicationDetails: {
     gap: 10,

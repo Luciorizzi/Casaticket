@@ -1,11 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { router, type Href, useRouter } from 'expo-router';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 import { ZodError } from 'zod';
 
-import { getJobQuoteStatusLabel } from '@casaticket/domain';
-import type { Job, JobQuote } from '@casaticket/types';
+import { getJobQuoteStatusLabel, getPaymentStatusLabel } from '@casaticket/domain';
+import type { Job, JobPayment, JobQuote, JobReview } from '@casaticket/types';
+import type { CreateReviewInput, DisputeJobCompletionInput } from '@casaticket/validation';
 
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -16,27 +17,32 @@ import { Screen } from '@/components/ui/screen';
 import { TextInput } from '@/components/ui/text-input';
 import { colors } from '@/components/ui/theme';
 import {
-  CollapsibleSection,
   InfoRow,
-  PrimaryActionBar,
-  ProcessTimeline,
   ScreenHeader,
   SectionCard,
-  StatusHeader,
 } from '@/components/ui/workflow';
+import { JobProgressList, type JobProgressRowItem, type JobProgressRowState } from '@/features/jobs/job-progress-list';
 import {
   acceptCustomerJobQuote,
+  confirmCustomerJobCompletion,
   confirmCustomerJobVisit,
+  createJobReview,
   customerJobByIdQueryKey,
   customerJobQueryKey,
+  disputeCustomerJobCompletion,
   getCustomerJobById,
   getCustomerJobByRequest,
+  getJobPayment,
+  jobPaymentQueryKey,
   jobQuotesQueryKey,
+  jobReviewsQueryKey,
+  listJobReviews,
   listJobQuotes,
+  mockPaymentProvider,
   rejectCustomerJobQuote,
   rejectCustomerJobVisit,
+  retryMockPayment,
 } from '@/features/jobs/api';
-import { getMobileJobStatusLabel } from '@/features/jobs/status-labels';
 import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
 
 function formatMoney(value: number): string {
@@ -47,13 +53,8 @@ function formatMoney(value: number): string {
   }).format(value);
 }
 
-const timelineSteps = [
-  { key: 'selected', label: 'Profesional' },
-  { key: 'visit', label: 'Visita' },
-  { key: 'diagnosis', label: 'Diagnóstico' },
-  { key: 'quote', label: 'Presupuesto' },
-  { key: 'accepted', label: 'Aceptado' },
-];
+const progressStepOrder = ['selected', 'visit', 'diagnosis', 'quote', 'payment', 'execution', 'completed'] as const;
+type ProgressStep = (typeof progressStepOrder)[number];
 
 function getTimelineStep(status: Job['status']): string {
   switch (status) {
@@ -68,49 +69,39 @@ function getTimelineStep(status: Job['status']): string {
     case 'quote_sent':
     case 'quote_rejected':
       return 'quote';
+    case 'payment_pending':
+      return 'payment';
     case 'quote_accepted':
-      return 'accepted';
+    case 'ready_to_start':
+    case 'in_progress':
+    case 'review_pending':
+    case 'completion_pending':
+      return 'execution';
+    case 'completed':
+    case 'disputed':
+      return 'completed';
     case 'cancelled':
       return 'selected';
   }
 }
 
-function getCustomerNextAction(job: Job, sentQuote: JobQuote | null): string {
-  if (job.status === 'visit_proposed') {
-    return 'Confirmar visita';
+function getProgressRowState(step: ProgressStep, status: Job['status']): JobProgressRowState {
+  if (status === 'disputed' && step === 'completed') {
+    return 'warning';
   }
 
-  if (sentQuote) {
-    return 'Revisar presupuesto';
+  const currentIndex = progressStepOrder.indexOf(getTimelineStep(status) as ProgressStep);
+  const stepIndex = progressStepOrder.indexOf(step);
+
+  if (stepIndex < currentIndex) {
+    return 'done';
   }
 
-  if (job.status === 'quote_accepted') {
-    return 'Presupuesto aceptado';
+  if (stepIndex === currentIndex) {
+    return 'active';
   }
 
-  return 'Seguir coordinación';
-}
-
-function getCustomerJobDescription(job: Job): string {
-  switch (job.status) {
-    case 'visit_proposed':
-      return 'El profesional propuso una visita. Confirmá si te sirve.';
-    case 'visit_confirmed':
-    case 'diagnosis_pending':
-      return 'La visita está confirmada. El profesional debe cargar el diagnóstico.';
-    case 'quote_pending':
-      return 'El diagnóstico ya está listo. Falta recibir el presupuesto.';
-    case 'quote_sent':
-      return 'Tenés un presupuesto listo para revisar.';
-    case 'quote_rejected':
-      return 'El presupuesto fue rechazado. Esperá una nueva versión.';
-    case 'quote_accepted':
-      return 'Aceptaste el presupuesto.';
-    case 'cancelled':
-      return 'Este trabajo fue cancelado.';
-    case 'coordination_pending':
-      return 'Usá el chat para coordinar la visita.';
-  }
+  return 'pending';
 }
 
 function shortText(value: string, maxLength: number): string {
@@ -129,19 +120,149 @@ function getSubmissionErrorMessage(error: unknown, fallback: string): string {
   return getUserFacingErrorMessage(error, fallback);
 }
 
-function formatDateTime(value: string): string {
-  return new Intl.DateTimeFormat('es-AR', {
-    dateStyle: 'short',
-    timeStyle: 'short',
-  }).format(new Date(value));
-}
-
-function getRelevantDate(job: Job): string {
-  if (job.scheduledDate) {
-    return `${job.scheduledDate}${job.scheduledTimeText ? ` · ${job.scheduledTimeText}` : ''}`;
+function formatDateShort(value: string | null): string {
+  if (!value) {
+    return 'Sin fecha';
   }
 
-  return `Actualizado: ${formatDateTime(job.updatedAt)}`;
+  return new Intl.DateTimeFormat('es-AR', {
+    day: 'numeric',
+    month: 'short',
+  }).format(new Date(`${value}T12:00:00`));
+}
+
+function getVisitSubtitle(job: Job): string {
+  const status = job.status === 'visit_confirmed' || job.status === 'diagnosis_pending' ? 'Confirmada' : 'Pendiente';
+  return `${formatDateShort(job.scheduledDate)} · ${job.scheduledTimeText ?? 'Sin horario'} · ${status}`;
+}
+
+function getDiagnosisSubtitle(job: Job): string {
+  if (job.recommendedWorkText) {
+    return shortText(job.recommendedWorkText, 46);
+  }
+
+  if (job.diagnosisText) {
+    return shortText(job.diagnosisText, 46);
+  }
+
+  return getTimelineStep(job.status) === 'diagnosis' ? 'Pendiente de diagnóstico' : 'A confirmar';
+}
+
+function getQuoteSubtitle(quote: JobQuote | null): string {
+  if (!quote) {
+    return 'Sin presupuesto';
+  }
+
+  return `v${quote.version} · ${getJobQuoteStatusLabel(quote.status)} · ${formatMoney(quote.totalAmount)}`;
+}
+
+function getPaymentSubtitle(payment: JobPayment | null, job: Job): string {
+  if (payment) {
+    if (payment.status === 'failed') {
+      return 'Pago rechazado · Reintentar';
+    }
+
+    return getPaymentStatusLabel(payment.status);
+  }
+
+  return job.status === 'payment_pending' ? 'Pendiente de pago' : 'A confirmar';
+}
+
+function getExecutionSubtitle(job: Job): string {
+  switch (job.status) {
+    case 'in_progress':
+      return 'Trabajo en curso';
+    case 'review_pending':
+    case 'completion_pending':
+      return 'Trabajo finalizado por el profesional';
+    case 'completed':
+      return 'Trabajo completado';
+    case 'disputed':
+      return 'Problema reportado';
+    case 'quote_accepted':
+    case 'ready_to_start':
+      return 'Esperando inicio';
+    default:
+      return 'Pendiente';
+  }
+}
+
+function getFinalizationSubtitle(job: Job): string {
+  switch (job.status) {
+    case 'review_pending':
+    case 'completion_pending':
+      return 'Pendiente de confirmación';
+    case 'completed':
+      return 'Trabajo confirmado';
+    case 'disputed':
+      return 'Problema reportado';
+    default:
+      return 'Pendiente';
+  }
+}
+
+function createCustomerProgressRows({
+  job,
+  onPress,
+  payment,
+  quote,
+}: {
+  job: Job;
+  onPress?: () => void;
+  payment: JobPayment | null;
+  quote: JobQuote | null;
+}): JobProgressRowItem[] {
+  return [
+    {
+      id: 'selected',
+      onPress,
+      state: getProgressRowState('selected', job.status),
+      subtitle: 'Profesional seleccionado',
+      title: 'Profesional',
+    },
+    {
+      id: 'visit',
+      onPress,
+      state: getProgressRowState('visit', job.status),
+      subtitle: getVisitSubtitle(job),
+      title: 'Visita',
+    },
+    {
+      id: 'diagnosis',
+      onPress,
+      state: getProgressRowState('diagnosis', job.status),
+      subtitle: getDiagnosisSubtitle(job),
+      title: 'Diagnóstico',
+    },
+    {
+      id: 'quote',
+      onPress,
+      state: getProgressRowState('quote', job.status),
+      subtitle: getQuoteSubtitle(quote),
+      title: 'Presupuesto',
+    },
+    {
+      id: 'payment',
+      onPress,
+      state: getProgressRowState('payment', job.status),
+      subtitle: getPaymentSubtitle(payment, job),
+      title: 'Pago',
+    },
+    {
+      id: 'execution',
+      onPress,
+      state: getProgressRowState('execution', job.status),
+      subtitle: getExecutionSubtitle(job),
+      title: 'Ejecución',
+    },
+    {
+      id: 'completed',
+      onPress,
+      state: getProgressRowState('completed', job.status),
+      subtitle: getFinalizationSubtitle(job),
+      title: 'Finalización',
+    },
+  ];
 }
 
 export function CustomerJobSummaryPanel({ requestId }: { requestId: string }) {
@@ -154,6 +275,11 @@ export function CustomerJobSummaryPanel({ requestId }: { requestId: string }) {
   const quotesQuery = useQuery({
     queryKey: job ? jobQuotesQueryKey(job.id) : jobQuotesQueryKey(requestId),
     queryFn: () => listJobQuotes(job?.id ?? ''),
+    enabled: Boolean(job),
+  });
+  const paymentQuery = useQuery({
+    queryKey: job ? jobPaymentQueryKey(job.id) : jobPaymentQueryKey(requestId),
+    queryFn: () => getJobPayment(job?.id ?? ''),
     enabled: Boolean(job),
   });
 
@@ -180,40 +306,19 @@ export function CustomerJobSummaryPanel({ requestId }: { requestId: string }) {
   const latestQuote = quotesQuery.data?.[0] ?? null;
   const sentQuote = quotesQuery.data?.find((quote) => quote.status === 'sent') ?? null;
   const visibleQuote = sentQuote ?? latestQuote;
+  const payment = paymentQuery.data ?? null;
+  const openJobProgress = () => {
+    router.push({
+      pathname: '/(customer)/jobs/[jobId]',
+      params: { jobId: job.id },
+    } as Href);
+  };
 
   return (
     <SectionCard title="Proceso del trabajo">
-      <StatusHeader
-        actionLabel={getCustomerNextAction(job, sentQuote)}
-        description={getCustomerJobDescription(job)}
-        status={getMobileJobStatusLabel(job.status)}
-        tone={job.status === 'quote_accepted' ? 'success' : 'accent'}
-      />
-      <ProcessTimeline currentStep={getTimelineStep(job.status)} steps={timelineSteps} />
-      <InfoRow label="Fecha relevante" value={getRelevantDate(job)} />
-      <InfoRow
-        label="Total"
-        value={visibleQuote ? formatMoney(visibleQuote.totalAmount) : 'Sin presupuesto todavía'}
-      />
+      <JobProgressList rows={createCustomerProgressRows({ job, onPress: openJobProgress, payment, quote: visibleQuote })} />
       {quotesQuery.error ? <ErrorState message="No pudimos cargar el presupuesto." /> : null}
-      <PrimaryActionBar
-        primaryAction={
-          job.id ? (
-            <Button
-              onPress={() =>
-                router.push({
-                  pathname: '/(customer)/jobs/[jobId]',
-                  params: { jobId: job.id },
-                } as Href)
-              }
-            >
-              Ver progreso del trabajo
-            </Button>
-          ) : (
-            <Text style={styles.meta}>El trabajo todavía no está disponible.</Text>
-          )
-        }
-      />
+      {paymentQuery.error ? <ErrorState message="No pudimos cargar el pago." /> : null}
     </SectionCard>
   );
 }
@@ -310,37 +415,71 @@ export function CustomerJobPanel({ requestId }: { requestId: string }) {
     queryFn: () => listJobQuotes(job?.id ?? ''),
     enabled: Boolean(job),
   });
+  const paymentQuery = useQuery({
+    queryKey: job ? jobPaymentQueryKey(job.id) : jobPaymentQueryKey(requestId),
+    queryFn: () => getJobPayment(job?.id ?? ''),
+    enabled: Boolean(job),
+  });
+  const reviewsQuery = useQuery({
+    queryKey: job ? jobReviewsQueryKey(job.id) : jobReviewsQueryKey(requestId),
+    queryFn: () => listJobReviews(job?.id ?? ''),
+    enabled: Boolean(job),
+  });
 
+  const setJob = (updatedJob: Job) => {
+    queryClient.setQueryData(customerJobQueryKey(requestId), updatedJob);
+    queryClient.setQueryData(customerJobByIdQueryKey(updatedJob.id), updatedJob);
+  };
   const updateJobStatus = (jobStatus: Job['status']) => {
     if (!job) {
       return;
     }
 
-    queryClient.setQueryData(customerJobQueryKey(requestId), { ...job, status: jobStatus });
+    const updatedJob = { ...job, status: jobStatus };
+    queryClient.setQueryData(customerJobQueryKey(requestId), updatedJob);
+    queryClient.setQueryData(customerJobByIdQueryKey(job.id), updatedJob);
   };
   const refreshQuotes = () => {
     if (job) {
       void queryClient.invalidateQueries({ queryKey: jobQuotesQueryKey(job.id) });
     }
   };
+  const setPayment = (payment: JobPayment) => {
+    queryClient.setQueryData(jobPaymentQueryKey(payment.jobId), payment);
+  };
 
   const confirmVisitMutation = useMutation({
     mutationFn: () => confirmCustomerJobVisit(job?.id ?? ''),
-    onSuccess: (updatedJob) => {
-      queryClient.setQueryData(customerJobQueryKey(requestId), updatedJob);
-    },
+    onSuccess: setJob,
   });
   const rejectVisitMutation = useMutation({
     mutationFn: () => rejectCustomerJobVisit(job?.id ?? ''),
-    onSuccess: (updatedJob) => {
-      queryClient.setQueryData(customerJobQueryKey(requestId), updatedJob);
-    },
+    onSuccess: setJob,
   });
   const acceptQuoteMutation = useMutation({
     mutationFn: acceptCustomerJobQuote,
     onSuccess: (result) => {
       updateJobStatus(result.jobStatus);
+      setPayment(result.payment);
       refreshQuotes();
+    },
+  });
+  const retryPaymentMutation = useMutation({
+    mutationFn: retryMockPayment,
+    onSuccess: setPayment,
+  });
+  const processPaymentMutation = useMutation({
+    mutationFn: ({ approved, paymentId }: { approved: boolean; paymentId: string }) =>
+      mockPaymentProvider.processPayment(paymentId, {
+        approved,
+        failureReason: approved ? null : 'Pago rechazado por el proveedor simulado.',
+      }),
+    onSuccess: (payment) => {
+      setPayment(payment);
+
+      if (payment.status === 'secured') {
+        updateJobStatus('ready_to_start');
+      }
     },
   });
   const rejectQuoteMutation = useMutation({
@@ -349,6 +488,23 @@ export function CustomerJobPanel({ requestId }: { requestId: string }) {
     onSuccess: (result) => {
       updateJobStatus(result.jobStatus);
       refreshQuotes();
+    },
+  });
+  const confirmCompletionMutation = useMutation({
+    mutationFn: () => confirmCustomerJobCompletion(job?.id ?? ''),
+    onSuccess: setJob,
+  });
+  const disputeCompletionMutation = useMutation({
+    mutationFn: (values: DisputeJobCompletionInput) => disputeCustomerJobCompletion(job?.id ?? '', values),
+    onSuccess: setJob,
+  });
+  const reviewMutation = useMutation({
+    mutationFn: (values: CreateReviewInput) => createJobReview(job?.id ?? '', values),
+    onSuccess: (review) => {
+      queryClient.setQueryData<JobReview[]>(jobReviewsQueryKey(review.jobId), (currentReviews = []) => [
+        ...currentReviews.filter((currentReview) => currentReview.id !== review.id),
+        review,
+      ]);
     },
   });
 
@@ -373,41 +529,41 @@ export function CustomerJobPanel({ requestId }: { requestId: string }) {
   }
 
   const quotes = quotesQuery.data ?? [];
+  const reviews = reviewsQuery.data ?? [];
   const latestQuote = quotes[0] ?? null;
-  const sentQuote = quotes.find((quote) => quote.status === 'sent') ?? null;
+  const sentQuote = job.status === 'quote_sent' ? quotes.find((quote) => quote.status === 'sent') ?? null : null;
+  const payment = paymentQuery.data ?? null;
+  const hasCustomerReview = reviews.some((review) => review.reviewerRole === 'customer');
   const loading =
     confirmVisitMutation.isPending ||
     rejectVisitMutation.isPending ||
     acceptQuoteMutation.isPending ||
-    rejectQuoteMutation.isPending;
+    retryPaymentMutation.isPending ||
+    processPaymentMutation.isPending ||
+    rejectQuoteMutation.isPending ||
+    confirmCompletionMutation.isPending ||
+    disputeCompletionMutation.isPending ||
+    reviewMutation.isPending;
 
   return (
     <View style={styles.stack}>
-      <SectionCard title="Trabajo seleccionado">
-        <StatusHeader
-          actionLabel={getCustomerNextAction(job, sentQuote)}
-          description={getCustomerJobDescription(job)}
-          status={getMobileJobStatusLabel(job.status)}
-          tone={job.status === 'quote_accepted' ? 'success' : 'accent'}
-        />
-        <ProcessTimeline currentStep={getTimelineStep(job.status)} steps={timelineSteps} />
-      </SectionCard>
-      <VisitSummary job={job} />
-      {job.diagnosisText ? <DiagnosisSummary job={job} /> : null}
-        {quotesQuery.isPending ? <LoadingState message="Cargando presupuestos..." /> : null}
-        {latestQuote ? (
-          <QuoteSummary quote={latestQuote} />
-        ) : (
-          <EmptyState description="El profesional todavía no envió un presupuesto formal." title="Sin presupuesto" />
-        )}
+      <JobProgressList rows={createCustomerProgressRows({ job, payment, quote: latestQuote })} />
+      {quotesQuery.isPending ? <LoadingState message="Cargando presupuestos..." /> : null}
+      {paymentQuery.isPending && job.status !== 'quote_sent' ? <LoadingState message="Cargando pago..." /> : null}
+      {!latestQuote ? (
+        <EmptyState description="El profesional todavía no envió un presupuesto formal." title="Sin presupuesto" />
+      ) : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <CustomerActions
           currentSentQuote={sentQuote}
+          hasCustomerReview={hasCustomerReview}
           job={job}
+          latestQuote={latestQuote}
           loading={loading}
+          payment={payment}
           onAcceptQuote={(quoteId) => {
             setError(null);
-            Alert.alert('Aceptar presupuesto', 'Aceptar todavía no genera un pago en esta fase.', [
+            Alert.alert('Aceptar presupuesto', 'Al aceptar se crea un pago pendiente para proteger el trabajo.', [
               { style: 'cancel', text: 'Volver' },
               {
                 onPress: () =>
@@ -426,6 +582,48 @@ export function CustomerJobPanel({ requestId }: { requestId: string }) {
               setError(getSubmissionErrorMessage(submissionError, 'No pudimos confirmar la visita.'));
             });
           }}
+          onConfirmCompletion={() => {
+            setError(null);
+            Alert.alert('Confirmar trabajo terminado', 'Confirmá que el trabajo quedó terminado.', [
+              { style: 'cancel', text: 'Volver' },
+              {
+                onPress: () =>
+                  void confirmCompletionMutation.mutateAsync().catch((submissionError) => {
+                    logDevelopmentSupabaseError('customer-job:confirm-completion-form', submissionError);
+                    setError(getSubmissionErrorMessage(submissionError, 'No pudimos confirmar el trabajo.'));
+                  }),
+                text: 'Confirmar',
+              },
+            ]);
+          }}
+          onPay={(paymentId, approved) => {
+            setError(null);
+            const processPayment = () =>
+              void processPaymentMutation.mutateAsync({ approved, paymentId }).catch((submissionError) => {
+                logDevelopmentSupabaseError('customer-job:process-payment-form', submissionError);
+                setError(getSubmissionErrorMessage(submissionError, 'No pudimos procesar el pago.'));
+              });
+
+            if (payment?.status === 'failed') {
+              void retryPaymentMutation
+                .mutateAsync(paymentId)
+                .then(() => processPayment())
+                .catch((submissionError) => {
+                  logDevelopmentSupabaseError('customer-job:retry-payment-form', submissionError);
+                  setError(getSubmissionErrorMessage(submissionError, 'No pudimos reintentar el pago.'));
+                });
+              return;
+            }
+
+            processPayment();
+          }}
+          onDisputeCompletion={(values) => {
+            setError(null);
+            void disputeCompletionMutation.mutateAsync(values).catch((submissionError) => {
+              logDevelopmentSupabaseError('customer-job:dispute-completion-form', submissionError);
+              setError(getSubmissionErrorMessage(submissionError, 'No pudimos reportar el problema.'));
+            });
+          }}
           onRejectQuote={(quoteId, rejectedReason) => {
             setError(null);
             void rejectQuoteMutation.mutateAsync({ quoteId, rejectedReason }).catch((submissionError) => {
@@ -440,6 +638,13 @@ export function CustomerJobPanel({ requestId }: { requestId: string }) {
               setError(getSubmissionErrorMessage(submissionError, 'No pudimos rechazar la visita.'));
             });
           }}
+          onReview={(values) => {
+            setError(null);
+            void reviewMutation.mutateAsync(values).catch((submissionError) => {
+              logDevelopmentSupabaseError('customer-job:create-review-form', submissionError);
+              setError(getSubmissionErrorMessage(submissionError, 'No pudimos guardar la calificación.'));
+            });
+          }}
         />
         {quotes.length > 1 ? <QuoteHistory quotes={quotes.slice(1)} /> : null}
     </View>
@@ -448,20 +653,34 @@ export function CustomerJobPanel({ requestId }: { requestId: string }) {
 
 function CustomerActions({
   currentSentQuote,
+  hasCustomerReview,
   job,
+  latestQuote,
   loading,
   onAcceptQuote,
+  onConfirmCompletion,
   onConfirmVisit,
+  onDisputeCompletion,
+  onPay,
   onRejectQuote,
   onRejectVisit,
+  onReview,
+  payment,
 }: {
   currentSentQuote: JobQuote | null;
+  hasCustomerReview: boolean;
   job: Job;
+  latestQuote: JobQuote | null;
   loading: boolean;
   onAcceptQuote: (quoteId: string) => void;
+  onConfirmCompletion: () => void;
   onConfirmVisit: () => void;
+  onDisputeCompletion: (values: DisputeJobCompletionInput) => void;
+  onPay: (paymentId: string, approved: boolean) => void;
   onRejectQuote: (quoteId: string, rejectedReason: string | null) => void;
   onRejectVisit: () => void;
+  onReview: (values: CreateReviewInput) => void;
+  payment: JobPayment | null;
 }) {
   const [rejectedReason, setRejectedReason] = useState('');
 
@@ -483,7 +702,7 @@ function CustomerActions({
     return (
       <View style={styles.form}>
         <Text style={styles.subtitle}>Responder presupuesto</Text>
-        <Text style={styles.meta}>Aceptar todavía no genera un pago en esta fase.</Text>
+        <Text style={styles.meta}>Al aceptar se prepara el pago protegido. Los materiales quedan solo como referencia.</Text>
         <Button disabled={loading} onPress={() => onAcceptQuote(currentSentQuote.id)}>
           {loading ? 'Guardando...' : 'Aceptar presupuesto'}
         </Button>
@@ -504,63 +723,219 @@ function CustomerActions({
     );
   }
 
+  if (job.status === 'payment_pending') {
+    if (!payment) {
+      return <ReadOnlyStatus title="Pago protegido" message="Preparando el pago de este presupuesto." />;
+    }
+
+    return <PaymentProtectionCard loading={loading} onPay={onPay} payment={payment} />;
+  }
+
+  if (job.status === 'quote_accepted' || job.status === 'ready_to_start') {
+    return (
+      <ReadOnlyStatus
+        title="Pago protegido"
+        message="El profesional podrá comenzar cuando coordinen el inicio del trabajo."
+      />
+    );
+  }
+
+  if (job.status === 'in_progress') {
+    return <ReadOnlyStatus title="Trabajo en curso" message="El profesional ya inició la ejecución." />;
+  }
+
+  if (job.status === 'review_pending' || job.status === 'completion_pending') {
+    return (
+      <CompletionDecisionForm
+        acceptedQuote={latestQuote}
+        job={job}
+        loading={loading}
+        onConfirm={onConfirmCompletion}
+        onDispute={onDisputeCompletion}
+      />
+    );
+  }
+
+  if (job.status === 'completed') {
+    if (payment?.status !== 'released') {
+      return (
+        <ReadOnlyStatus
+          title="Pago pendiente de liberación"
+          message="Vas a poder calificar cuando el pago se libere al profesional."
+        />
+      );
+    }
+
+    if (hasCustomerReview) {
+      return <ReadOnlyStatus title="Calificación enviada" message="Ya calificaste a este profesional." />;
+    }
+
+    return <ReviewForm loading={loading} onSubmit={onReview} title="Calificar profesional" />;
+  }
+
+  if (job.status === 'disputed') {
+    return (
+      <ReadOnlyStatus
+        title="Problema reportado"
+        message="El historial queda visible. La resolución administrativa queda fuera de esta fase."
+      />
+    );
+  }
+
   return null;
 }
 
-function VisitSummary({ job }: { job: Job }) {
+function PaymentProtectionCard({
+  loading,
+  onPay,
+  payment,
+}: {
+  loading: boolean;
+  onPay: (paymentId: string, approved: boolean) => void;
+  payment: JobPayment;
+}) {
   return (
-    <CollapsibleSection
-      preview={`${job.scheduledDate ?? 'Sin fecha'} · ${job.scheduledTimeText ?? 'Sin horario'}`}
-      title="Coordinación"
-    >
-      <InfoRow label="Fecha" value={job.scheduledDate ?? 'Sin propuesta'} />
-      <InfoRow label="Horario" value={job.scheduledTimeText ?? 'Sin horario'} />
-      <InfoRow label="Notas" value={job.schedulingNotes ?? 'Sin notas'} />
-    </CollapsibleSection>
+    <Card>
+      <View style={styles.form}>
+        <Text style={styles.subtitle}>Pago protegido</Text>
+        <InfoRow label="Mano de obra" value={formatMoney(payment.laborAmount)} />
+        <InfoRow label="Visita" value={formatMoney(payment.visitAmount)} />
+        <InfoRow label="Comisión CasaTicket" value={formatMoney(payment.platformFeeAmount)} />
+        <InfoRow label="Total" value={formatMoney(payment.customerTotalAmount)} />
+        <Text style={styles.meta}>
+          Materiales aproximados no incluidos: {formatMoney(payment.materialsReferenceAmount)}.
+        </Text>
+        <Text style={styles.meta}>
+          El profesional podrá comenzar cuando el pago quede confirmado. El dinero se liberará después de finalizar el
+          trabajo, salvo que reportes un problema.
+        </Text>
+        {payment.status === 'failed' && payment.failureReason ? <Text style={styles.error}>{payment.failureReason}</Text> : null}
+        <Button disabled={loading} onPress={() => onPay(payment.id, true)}>
+          {loading ? 'Procesando...' : 'Pagar y asegurar el trabajo'}
+        </Button>
+        {process.env.NODE_ENV !== 'production' ? (
+          <Button disabled={loading} onPress={() => onPay(payment.id, false)} variant="secondary">
+            Simular pago rechazado
+          </Button>
+        ) : null}
+      </View>
+    </Card>
   );
 }
 
-function DiagnosisSummary({ job }: { job: Job }) {
+function ReadOnlyStatus({ message, title }: { message: string; title: string }) {
   return (
-    <CollapsibleSection
-      preview={shortText(job.diagnosisText ?? 'Diagnóstico pendiente', 90)}
-      title="Diagnóstico"
-    >
-      <InfoRow label="Problema detectado" value={job.diagnosisText ?? 'Sin diagnóstico'} />
-      <InfoRow label="Trabajo recomendado" value={job.recommendedWorkText ?? 'Sin recomendación'} />
-      <InfoRow label="Materiales" value={job.materialsNotes ?? 'Sin observaciones'} />
-    </CollapsibleSection>
+    <Card>
+      <View style={styles.form}>
+        <Text style={styles.subtitle}>{title}</Text>
+        <Text style={styles.meta}>{message}</Text>
+      </View>
+    </Card>
   );
 }
 
-function QuoteSummary({ quote }: { quote: JobQuote }) {
-  const rows = useMemo(
-    () => [
-      { label: 'Mano de obra', amount: quote.laborAmount },
-      { label: 'Materiales aproximados', amount: quote.materialsAmount },
-      { label: 'Visita', amount: quote.visitAmount },
-      { label: 'Comisión CasaTicket (5%)', amount: quote.platformFeeAmount },
-    ],
-    [quote],
-  );
+function CompletionDecisionForm({
+  acceptedQuote,
+  job,
+  loading,
+  onConfirm,
+  onDispute,
+}: {
+  acceptedQuote: JobQuote | null;
+  job: Job;
+  loading: boolean;
+  onConfirm: () => void;
+  onDispute: (values: DisputeJobCompletionInput) => void;
+}) {
+  const [disputeReason, setDisputeReason] = useState('');
+  const [disputeDetails, setDisputeDetails] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const submitDispute = () => {
+    const payload = {
+      disputeDetails: disputeDetails.trim(),
+      disputeReason: disputeReason.trim(),
+    };
+    setValidationError(null);
+
+    if (payload.disputeReason.length < 3) {
+      setValidationError('El motivo es obligatorio.');
+      return;
+    }
+
+    if (payload.disputeDetails.length < 20) {
+      setValidationError('El detalle debe tener al menos 20 caracteres.');
+      return;
+    }
+
+    onDispute(payload);
+  };
 
   return (
-    <CollapsibleSection
-      initiallyExpanded={quote.status === 'sent'}
-      preview={`v${quote.version} · ${getJobQuoteStatusLabel(quote.status)} · ${formatMoney(quote.totalAmount)}`}
-      title="Presupuesto"
-    >
-      <Text numberOfLines={2} style={styles.body}>{quote.description}</Text>
-      {rows.map((row) => (
-        <InfoRow key={row.label} label={row.label} value={formatMoney(row.amount)} />
-      ))}
-      <Text style={styles.meta}>Materiales no incluidos en el total final.</Text>
-      <InfoRow label="Total final" value={formatMoney(quote.totalAmount)} />
-      <InfoRow label="Estado" value={getJobQuoteStatusLabel(quote.status)} />
-      <InfoRow label="Vigencia" value={quote.validUntil ?? 'Sin vencimiento'} />
-      <InfoRow label="Duración" value={quote.estimatedDurationText ?? 'Sin estimación'} />
-      {quote.rejectedReason ? <InfoRow label="Motivo rechazo" value={quote.rejectedReason} /> : null}
-    </CollapsibleSection>
+    <Card>
+      <View style={styles.form}>
+        <Text style={styles.subtitle}>Revisar finalización</Text>
+        <InfoRow label="Presupuesto aceptado" value={acceptedQuote ? formatMoney(acceptedQuote.totalAmount) : 'Sin presupuesto'} />
+        <InfoRow label="Trabajo realizado" value={job.completionSummary ?? 'Sin resumen'} />
+        <InfoRow label="Materiales informados" value={job.finalMaterialsNotes ?? 'Sin materiales informados'} />
+        <Button disabled={loading} onPress={onConfirm}>
+          {loading ? 'Guardando...' : 'Confirmar trabajo terminado'}
+        </Button>
+        <Text style={styles.label}>Reportar un problema</Text>
+        <TextInput onChangeText={setDisputeReason} placeholder="Motivo" value={disputeReason} />
+        <TextInput multiline onChangeText={setDisputeDetails} placeholder="Detalle del problema" value={disputeDetails} />
+        {validationError ? <Text style={styles.error}>{validationError}</Text> : null}
+        <Button disabled={loading} onPress={submitDispute} variant="secondary">
+          Reportar un problema
+        </Button>
+      </View>
+    </Card>
+  );
+}
+
+function ReviewForm({
+  loading,
+  onSubmit,
+  title,
+}: {
+  loading: boolean;
+  onSubmit: (values: CreateReviewInput) => void;
+  title: string;
+}) {
+  const [rating, setRating] = useState('');
+  const [comment, setComment] = useState('');
+  const [validationError, setValidationError] = useState<string | null>(null);
+
+  const submit = () => {
+    const numericRating = Number(rating);
+    const payload = {
+      comment: comment.trim() || null,
+      rating: numericRating,
+    };
+    setValidationError(null);
+
+    if (!Number.isInteger(numericRating) || numericRating < 1 || numericRating > 5) {
+      setValidationError('Elegí una calificación entre 1 y 5.');
+      return;
+    }
+
+    onSubmit(payload);
+  };
+
+  return (
+    <Card>
+      <View style={styles.form}>
+        <Text style={styles.subtitle}>{title}</Text>
+        <Text style={styles.label}>Calificación general</Text>
+        <TextInput keyboardType="numeric" onChangeText={setRating} placeholder="1 a 5" value={rating} />
+        <Text style={styles.label}>Comentario opcional</Text>
+        <TextInput multiline onChangeText={setComment} placeholder="Comentario opcional" value={comment} />
+        {validationError ? <Text style={styles.error}>{validationError}</Text> : null}
+        <Button disabled={loading} onPress={submit}>
+          {loading ? 'Guardando...' : title}
+        </Button>
+      </View>
+    </Card>
   );
 }
 
@@ -609,6 +984,11 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: 15,
     lineHeight: 22,
+  },
+  label: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: '700',
   },
   total: {
     color: colors.text,

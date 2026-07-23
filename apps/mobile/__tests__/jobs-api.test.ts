@@ -9,8 +9,10 @@ jest.mock('@/lib/supabase', () => ({
 import {
   acceptCustomerJobQuote,
   createProfessionalJobQuote,
+  getJobPayment,
   getCustomerJobByRequest,
   listJobQuotes,
+  mockPaymentProvider,
   proposeProfessionalJobVisit,
   recordProfessionalJobDiagnosis,
   rejectCustomerJobQuote,
@@ -33,6 +35,38 @@ function createJobRow(overrides: Record<string, unknown> = {}) {
     materials_notes: null,
     diagnosis_notes: null,
     diagnosed_at: null,
+    review_deadline_at: null,
+    completion_mode: null,
+    created_at: '2026-07-21T10:00:00.000Z',
+    updated_at: '2026-07-21T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function createPaymentRow(overrides: Record<string, unknown> = {}) {
+  return {
+    payment_id: 'payment-1',
+    job_id: 'job-1',
+    quote_id: 'quote-1',
+    customer_id: 'customer-1',
+    professional_id: 'professional-1',
+    status: 'pending',
+    provider: 'mock',
+    provider_payment_id: null,
+    currency: 'ARS',
+    labor_amount: '10000',
+    visit_amount: '1500',
+    materials_reference_amount: '2500',
+    platform_fee_amount: '500',
+    customer_total_amount: '12000',
+    professional_amount: '11500',
+    released_amount: null,
+    failure_reason: null,
+    paid_at: null,
+    secured_at: null,
+    release_pending_at: null,
+    released_at: null,
+    refunded_at: null,
     created_at: '2026-07-21T10:00:00.000Z',
     updated_at: '2026-07-21T10:00:00.000Z',
     ...overrides,
@@ -91,7 +125,7 @@ describe('jobs api', () => {
     mockRpc.mockResolvedValueOnce({
       data: [
         createJobRow({
-          scheduled_date: '2026-07-22',
+          scheduled_date: '2099-07-22',
           scheduled_time_text: '10 a 12',
           status: 'visit_proposed',
         }),
@@ -100,14 +134,14 @@ describe('jobs api', () => {
     });
 
     await proposeProfessionalJobVisit('job-1', {
-      scheduledDate: '2026-07-22',
+      scheduledDate: '2099-07-22',
       scheduledTimeText: '10 a 12',
       schedulingNotes: null,
     });
 
     expect(mockRpc).toHaveBeenCalledWith('propose_job_visit', {
       p_job_id: 'job-1',
-      p_scheduled_date: '2026-07-22',
+      p_scheduled_date: '2099-07-22',
       p_scheduled_time_text: '10 a 12',
       p_scheduling_notes: null,
     });
@@ -163,7 +197,11 @@ describe('jobs api', () => {
   it('sends and responds to quotes through RPCs', async () => {
     mockRpc
       .mockResolvedValueOnce({ data: [createQuoteRow({ status: 'sent' })], error: null })
-      .mockResolvedValueOnce({ data: [{ job_id: 'job-1' }], error: null })
+      .mockResolvedValueOnce({
+        data: [{ job_id: 'job-1', job_status: 'payment_pending', payment_id: 'payment-1' }],
+        error: null,
+      })
+      .mockResolvedValueOnce({ data: [createPaymentRow()], error: null })
       .mockResolvedValueOnce({ data: [{ job_id: 'job-1' }], error: null });
 
     await sendProfessionalJobQuote('quote-1');
@@ -171,10 +209,34 @@ describe('jobs api', () => {
     await rejectCustomerJobQuote('quote-2', { rejectedReason: 'Necesito ajustar materiales.' });
 
     expect(mockRpc).toHaveBeenNthCalledWith(1, 'send_job_quote', { p_quote_id: 'quote-1' });
-    expect(mockRpc).toHaveBeenNthCalledWith(2, 'accept_job_quote', { p_quote_id: 'quote-1' });
-    expect(mockRpc).toHaveBeenNthCalledWith(3, 'reject_job_quote', {
+    expect(mockRpc).toHaveBeenNthCalledWith(2, 'accept_quote_and_create_payment', { p_quote_id: 'quote-1' });
+    expect(mockRpc).toHaveBeenNthCalledWith(3, 'get_payment_status', { p_payment_id: 'payment-1' });
+    expect(mockRpc).toHaveBeenNthCalledWith(4, 'reject_job_quote', {
       p_quote_id: 'quote-2',
       p_rejected_reason: 'Necesito ajustar materiales.',
+    });
+  });
+
+  it('loads and processes mock payments without frontend amount input', async () => {
+    mockRpc
+      .mockResolvedValueOnce({ data: [createPaymentRow()], error: null })
+      .mockResolvedValueOnce({ data: [createPaymentRow({ status: 'secured' })], error: null });
+
+    const payment = await getJobPayment('job-1');
+    const securedPayment = await mockPaymentProvider.processPayment('payment-1', { approved: true });
+
+    expect(payment).toMatchObject({
+      customerTotalAmount: 12000,
+      materialsReferenceAmount: 2500,
+      platformFeeAmount: 500,
+      professionalAmount: 11500,
+    });
+    expect(securedPayment.status).toBe('secured');
+    expect(mockRpc).toHaveBeenNthCalledWith(1, 'get_job_payment', { p_job_id: 'job-1' });
+    expect(mockRpc).toHaveBeenNthCalledWith(2, 'secure_mock_payment', {
+      p_payment_id: 'payment-1',
+      p_approved: true,
+      p_failure_reason: null,
     });
   });
 });

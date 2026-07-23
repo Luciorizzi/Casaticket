@@ -14,10 +14,24 @@ export function getMobileJobStatusLabel(status: JobStatus): string {
       return 'Presupuesto pendiente';
     case 'quote_sent':
       return 'Presupuesto enviado';
+    case 'payment_pending':
+      return 'Pendiente de pago';
     case 'quote_rejected':
       return 'Presupuesto rechazado';
     case 'quote_accepted':
       return 'Presupuesto aceptado';
+    case 'ready_to_start':
+      return 'Listo para iniciar';
+    case 'in_progress':
+      return 'Trabajo en curso';
+    case 'review_pending':
+      return 'Revisión del cliente';
+    case 'completion_pending':
+      return 'Esperando confirmación';
+    case 'completed':
+      return 'Trabajo completado';
+    case 'disputed':
+      return 'Problema reportado';
     case 'cancelled':
       return 'Cancelada';
   }

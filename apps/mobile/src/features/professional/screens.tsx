@@ -1057,10 +1057,24 @@ function getProfessionalJobNextAction(status: ProfessionalSelectedJob['jobStatus
       return 'Crear presupuesto';
     case 'quote_sent':
       return 'Esperar respuesta';
+    case 'payment_pending':
+      return 'Esperar pago';
     case 'quote_rejected':
       return 'Crear nueva versión';
     case 'quote_accepted':
       return 'Presupuesto aceptado';
+    case 'ready_to_start':
+      return 'Listo para iniciar';
+    case 'in_progress':
+      return 'Trabajo en curso';
+    case 'review_pending':
+      return 'Esperar confirmación';
+    case 'completion_pending':
+      return 'Esperar confirmación';
+    case 'completed':
+      return 'Trabajo completado';
+    case 'disputed':
+      return 'Problema reportado';
     case 'cancelled':
       return 'Trabajo cancelado';
     case null:

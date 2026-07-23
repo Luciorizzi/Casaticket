@@ -67,6 +67,9 @@ interface CustomerRequestApplicationRow {
   professional_service_radius_km: number;
   professional_verification_status: CustomerRequestApplication['professionalVerificationStatus'];
   professional_category_names: string[] | null;
+  professional_completed_jobs_count?: number | null;
+  professional_average_rating?: number | string | null;
+  professional_reviews_count?: number | null;
 }
 
 interface MarkApplicationViewedRow {
@@ -171,6 +174,12 @@ function mapCustomerRequestApplication(
     professionalServiceRadiusKm: row.professional_service_radius_km,
     professionalVerificationStatus: row.professional_verification_status,
     professionalCategoryNames: row.professional_category_names ?? [],
+    professionalCompletedJobsCount: row.professional_completed_jobs_count ?? 0,
+    professionalAverageRating:
+      row.professional_average_rating === null || typeof row.professional_average_rating === 'undefined'
+        ? null
+        : Number(row.professional_average_rating),
+    professionalReviewsCount: row.professional_reviews_count ?? 0,
   };
 }
 
