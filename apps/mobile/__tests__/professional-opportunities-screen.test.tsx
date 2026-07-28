@@ -7,12 +7,15 @@ import type {
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
-import { Alert } from 'react-native';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react-native';
+import { Alert, ScrollView } from 'react-native';
 
 import { queryKeys } from '@/lib/query-keys';
 
 const mockPush = jest.fn();
+const mockBack = jest.fn();
+const mockReplace = jest.fn();
+const mockCanGoBack = jest.fn();
 const mockCreateApplication = jest.fn();
 const mockGetOwnApplication = jest.fn();
 const mockGetProfessionalOpportunity = jest.fn();
@@ -27,8 +30,10 @@ let mockProfessionalCategoryIds = ['category-1'];
 
 jest.mock('expo-router', () => ({
   router: {
+    back: (...args: unknown[]) => mockBack(...args),
+    canGoBack: (...args: unknown[]) => mockCanGoBack(...args),
     push: (...args: unknown[]) => mockPush(...args),
-    replace: jest.fn(),
+    replace: (...args: unknown[]) => mockReplace(...args),
   },
   useFocusEffect: (callback: () => void | (() => void)) => {
     mockFocusEffectCallback = callback;
@@ -262,6 +267,7 @@ describe('professional opportunities screens', () => {
     consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
     mockFocusEffectCallback = null;
     mockProfessionalCategoryIds = ['category-1'];
+    mockCanGoBack.mockReturnValue(true);
     mockListProfessionalOpportunities.mockResolvedValue([createOpportunity()]);
     mockListOwnApplications.mockResolvedValue([]);
     mockListProfessionalSelectedJobs.mockResolvedValue([]);
@@ -311,8 +317,27 @@ describe('professional opportunities screens', () => {
     });
 
     expect(screen.queryByText('Calle privada 123')).toBeNull();
-    fireEvent.press(screen.getByText('Arreglo de pérdida'));
+    expect(screen.getByText('1 oportunidad')).toBeTruthy();
+    expect(screen.getByText('Necesito resolver una pérdida debajo de la bacha.').props.numberOfLines).toBe(2);
+    fireEvent.press(screen.getByTestId('professional-opportunity-card'));
     expect(mockPush).toHaveBeenCalledWith('/(professional)/opportunities/request-1');
+  });
+
+  it('renders refresh in the header and filters as compact chips without a duplicated summary', async () => {
+    renderWithQueryClient(<ProfessionalOpportunitiesScreen />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Arreglo de pérdida')).toBeTruthy();
+    });
+
+    const header = screen.getByTestId('opportunities-header');
+    expect(within(header).getByLabelText('Actualizar oportunidades')).toBeTruthy();
+    expect(screen.getByLabelText('Filtrar por categoría')).toBeTruthy();
+    expect(screen.getByLabelText('Filtrar por ciudad')).toBeTruthy();
+    expect(screen.getByLabelText('Filtrar por urgencia')).toBeTruthy();
+    expect(screen.queryByText(/Categoría: Todas las categorías/)).toBeNull();
+    expect(screen.queryByText(/Ciudad: Todas las ciudades/)).toBeNull();
+    expect(screen.queryByText(/Urgencia: Todas/)).toBeNull();
   });
 
   it('deduplicates opportunities, keeps withdrawn requests visible and sorts by recent first', async () => {
@@ -406,6 +431,7 @@ describe('professional opportunities screens', () => {
       expect(screen.getByText('No hay oportunidades disponibles.')).toBeTruthy();
     });
 
+    expect(screen.getByText('0 oportunidades')).toBeTruthy();
     expect(screen.queryByText('Rotura de tecla de luz')).toBeNull();
   });
 
@@ -431,9 +457,15 @@ describe('professional opportunities screens', () => {
       expect(screen.getByText('Rotura de tecla de luz')).toBeTruthy();
     });
 
+    expect(screen.getByText('Categoría')).toBeTruthy();
+    expect(screen.getByText('Ciudad')).toBeTruthy();
+    expect(screen.getByText('Urgencia')).toBeTruthy();
+    expect(screen.queryByText('Albani…')).toBeNull();
+    expect(screen.queryByText('Todas…')).toBeNull();
+
     expect(screen.getByText('No sé qué rubro necesito')).toBeTruthy();
 
-    fireEvent.press(screen.getByLabelText('Filtrar por Categoría'));
+    fireEvent.press(screen.getByLabelText('Filtrar por categoría'));
 
     expect(screen.getAllByText('Todas las categorías').length).toBeGreaterThan(0);
     expect(screen.getByText('Electricidad')).toBeTruthy();
@@ -448,7 +480,11 @@ describe('professional opportunities screens', () => {
     expect(screen.getByText('Rotura de tecla de luz')).toBeTruthy();
     expect(screen.queryByText('No sé qué rubro necesito')).toBeNull();
 
-    fireEvent.press(screen.getByLabelText('Filtrar por Categoría'));
+    fireEvent.press(screen.getByLabelText('Limpiar filtro de categoría'));
+    expect(screen.getByText('Rotura de tecla de luz')).toBeTruthy();
+    expect(screen.getByText('No sé qué rubro necesito')).toBeTruthy();
+
+    fireEvent.press(screen.getByLabelText('Filtrar por categoría'));
     fireEvent.press(screen.getByText('Sin categoría'));
 
     expect(screen.getByText('No sé qué rubro necesito')).toBeTruthy();
@@ -475,7 +511,7 @@ describe('professional opportunities screens', () => {
       expect(screen.getByText('Rotura de tecla de luz')).toBeTruthy();
     });
 
-    fireEvent.press(screen.getByLabelText('Filtrar por Ciudad'));
+    fireEvent.press(screen.getByLabelText('Filtrar por ciudad'));
     fireEvent.changeText(screen.getByPlaceholderText('Buscar ciudad'), 'caba');
     expect(screen.getByText('CABA')).toBeTruthy();
     expect(screen.queryByText('Lanús')).toBeNull();
@@ -513,16 +549,18 @@ describe('professional opportunities screens', () => {
       expect(screen.getByText('Rotura de tecla de luz')).toBeTruthy();
     });
 
-    fireEvent.press(screen.getByLabelText('Filtrar por Ciudad'));
+    expect(screen.getByText('3 oportunidades')).toBeTruthy();
+
+    fireEvent.press(screen.getByLabelText('Filtrar por ciudad'));
     fireEvent.press(screen.getByText('CABA'));
-    fireEvent.press(screen.getByLabelText('Filtrar por Urgencia'));
+    fireEvent.press(screen.getByLabelText('Filtrar por urgencia'));
     fireEvent.press(screen.getByText('Flexible'));
 
     expect(screen.getByText('Rotura de tecla de luz')).toBeTruthy();
     expect(screen.queryByText('Cortocircuito en cocina')).toBeNull();
     expect(screen.queryByText('Llave térmica en Lanús')).toBeNull();
 
-    fireEvent.press(screen.getByText('Limpiar filtros'));
+    fireEvent.press(screen.getByText('Limpiar'));
 
     expect(screen.getByText('Rotura de tecla de luz')).toBeTruthy();
     expect(screen.getByText('Cortocircuito en cocina')).toBeTruthy();
@@ -605,6 +643,27 @@ describe('professional opportunities screens', () => {
     await waitFor(() => {
       expect(screen.getByText('Rotura de tecla de luz')).toBeTruthy();
     });
+  });
+
+  it('renders a back button, uses history and keeps the proposal detail scrollable', async () => {
+    renderWithQueryClient(<ProfessionalOpportunityDetailScreen requestId="request-1" />);
+
+    await waitFor(() => expect(screen.getByText('Enviar postulación')).toBeTruthy());
+    expect(screen.UNSAFE_getByType(ScrollView)).toBeTruthy();
+    fireEvent.press(screen.getByLabelText('Volver a oportunidades'));
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(screen.getByText('Enviar postulación')).toBeTruthy();
+  });
+
+  it('falls back to the opportunities list when there is no navigation history', async () => {
+    mockCanGoBack.mockReturnValue(false);
+    renderWithQueryClient(<ProfessionalOpportunityDetailScreen requestId="request-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText('Volver a oportunidades')).toBeTruthy());
+    fireEvent.press(screen.getByLabelText('Volver a oportunidades'));
+    expect(mockBack).not.toHaveBeenCalled();
+    expect(mockReplace).toHaveBeenCalledWith('/(professional)/opportunities');
   });
 
   it('updates application cache after creating an application', async () => {

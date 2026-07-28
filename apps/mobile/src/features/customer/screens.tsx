@@ -53,6 +53,9 @@ import { resolveAppRoute } from '@/features/navigation/access';
 import { fetchOwnDefaultAddress, saveCustomerOnboarding } from '@/features/profile/api';
 import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
 import { queryKeys } from '@/lib/query-keys';
+import { AttachmentGallerySection, AttachmentPicker } from '@/features/attachments/components';
+import { uploadAttachments, type PendingAttachment } from '@/features/attachments/api';
+import { CustomerProfileHubScreen } from '@/features/customer/customer-profile-screens';
 
 export function CustomerOnboardingScreen() {
   return (
@@ -108,6 +111,9 @@ export function CustomerCreateRequestScreen() {
   const { sessionState } = useAuthSession();
   const profile = sessionState.status === 'authenticated' ? sessionState.profile : null;
   const [error, setError] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [createdRequestId, setCreatedRequestId] = useState<string | null>(null);
+  const [uploadingAttachments, setUploadingAttachments] = useState(false);
   const categoryQuery = useQuery({
     queryKey: queryKeys.categories,
     queryFn: listActiveCategories,
@@ -127,9 +133,20 @@ export function CustomerCreateRequestScreen() {
         ...currentRequests.filter((request) => request.id !== createdRequest.id),
       ]);
 
-      router.replace(`/(customer)/requests/${createdRequest.id}` as Href);
     },
   });
+  const uploadAndOpenRequest = async (requestId: string, pending: PendingAttachment[]) => {
+    setUploadingAttachments(true);
+    const result = await uploadAttachments({ assets: pending, serviceRequestId: requestId, type: 'request_evidence' });
+    setUploadingAttachments(false);
+    if (result.failed.length > 0) {
+      setAttachments(result.failed);
+      setCreatedRequestId(requestId);
+      setError(`${result.failed.length} imagen(es) no pudieron subirse. Reintentá sin volver a crear la solicitud.`);
+      return;
+    }
+    router.replace(`/(customer)/requests/${requestId}` as Href);
+  };
   const initialValues = useMemo<CreateServiceRequestInput>(
     () => ({
       title: '',
@@ -154,18 +171,32 @@ export function CustomerCreateRequestScreen() {
       title="Crear solicitud"
     >
       {error ? <ErrorState message={error} title="No pudimos publicar la solicitud" /> : null}
-      <ServiceRequestForm
+      {createdRequestId ? (
+        <>
+          <AttachmentPicker disabled={uploadingAttachments} onChange={setAttachments} value={attachments} />
+          <Button disabled={uploadingAttachments || attachments.length === 0} onPress={() => void uploadAndOpenRequest(createdRequestId, attachments)}>
+            {uploadingAttachments ? 'Subiendo fotos...' : 'Reintentar fotos'}
+          </Button>
+        </>
+      ) : <ServiceRequestForm
+        attachments={attachments}
         categories={categoryQuery.data ?? []}
         categoriesError={categoryQuery.error instanceof Error ? categoryQuery.error.message : undefined}
         categoriesLoading={categoryQuery.isPending}
         initialValues={initialValues}
         loading={createMutation.isPending}
+        onAttachmentsChange={setAttachments}
         onRetryCategories={() => void categoryQuery.refetch()}
         onSubmit={async (values) => {
           setError(null);
 
           try {
-            await createMutation.mutateAsync(values);
+            const createdRequest = await createMutation.mutateAsync(values);
+            if (attachments.length === 0) {
+              router.replace(`/(customer)/requests/${createdRequest.id}` as Href);
+              return;
+            }
+            await uploadAndOpenRequest(createdRequest.id, attachments);
           } catch (submissionError) {
             logDevelopmentSupabaseError('service-requests:create-screen', submissionError);
             setError(
@@ -177,6 +208,7 @@ export function CustomerCreateRequestScreen() {
           }
         }}
       />
+      }
     </Screen>
   );
 }
@@ -380,6 +412,9 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
   return (
     <Screen subtitle="Detalle de la solicitud publicada." title={request.title}>
       <ServiceRequestDetailCard applications={applications} request={request} />
+      <Card>
+        <AttachmentGallerySection serviceRequestId={request.id} title="Fotos del problema" type="request_evidence" />
+      </Card>
       {request.status === 'published' ? (
         <Button disabled={cancelMutation.isPending} onPress={confirmCancel} variant="danger">
           {cancelMutation.isPending ? 'Cancelando...' : 'Cancelar solicitud'}
@@ -748,13 +783,7 @@ export function CustomerApplicationDetailScreen({
 }
 
 export function CustomerProfileScreen() {
-  return (
-    <CustomerProfileEditorScreen
-      mode="edit"
-      subtitle="Editá tus datos básicos y mantené tu información al día."
-      title="Perfil"
-    />
-  );
+  return <CustomerProfileHubScreen />;
 }
 
 function CustomerProfileEditorScreen({

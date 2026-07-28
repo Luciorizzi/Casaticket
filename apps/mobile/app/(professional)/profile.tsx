@@ -1,5 +1,5 @@
-import { ProfessionalProfileScreen } from '@/features/professional/screens';
+import { ProfessionalProfileHubScreen } from '@/features/professional/professional-profile-screens';
 
 export default function ProfessionalProfileRoute() {
-  return <ProfessionalProfileScreen />;
+  return <ProfessionalProfileHubScreen />;
 }

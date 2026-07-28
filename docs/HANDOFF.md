@@ -1,6 +1,6 @@
 # CasaTicket Handoff
 
-Ultima actualizacion: 2026-07-23.
+Ultima actualizacion: 2026-07-28.
 
 Este documento resume el estado real del repositorio para que otro agente pueda continuar sin relevar todo desde cero. No contiene secretos.
 
@@ -14,6 +14,8 @@ CasaTicket es un monorepo con:
 - `supabase`: migraciones, seed, scripts y smoke tests RLS.
 
 El flujo movil ya supera el alcance inicial documentado en `docs/product/mvp-scope.md`: ademas de autenticacion, onboarding, solicitudes, oportunidades, postulaciones y seleccion, existen chat privado, jobs, diagnostico, presupuestos, pagos mock protegidos, ejecucion, finalizacion y calificaciones.
+
+La rama de desarrollo incluye adjuntos privados de imágenes para solicitudes, diagnóstico y finalización. Usa `public.attachments`, el bucket privado `service-attachments`, URLs firmadas y RPCs que validan ownership, matching, participantes, estado y límite de cinco imágenes. La decisión está documentada en `docs/architecture/attachment-storage.md`.
 
 ## Funcionalidades implementadas
 
@@ -41,6 +43,7 @@ Archivos principales:
 
 ### Cliente
 
+- Perfil cliente refactorizado como hub con secciones separadas de datos personales y ubicación; comparte navegación visual e iconografía de tab bar con el perfil profesional y actualiza caches de perfil/dirección al guardar.
 - Home cliente.
 - Creacion de solicitudes reales en `service_requests`.
 - Lista y detalle de solicitudes propias.
@@ -167,6 +170,18 @@ El ultimo foco funcional fue estabilizar Oportunidades del profesional y datos d
 
 No hay cambios funcionales pendientes en el worktree antes de crear este handoff; `docs/HANDOFF.md` es el unico archivo que debe quedar modificado por esta tarea.
 
+## Checkpoint backend 2026-07-27
+
+- Se verifico `dev` sincronizada con `origin/dev` y sin cambios locales antes de iniciar.
+- Docker Desktop estaba detenido; se inicio y se levanto Supabase local sin ejecutar `db:reset`.
+- El primer smoke fallo por ausencia o desactualizacion de los usuarios demo locales.
+- Se recrearon los usuarios con `pnpm db:seed:users` usando variables locales solo en memoria.
+- El segundo intento detecto una fragilidad de aislamiento del test: `release_eligible_payments()` libero correctamente el pago del smoke y otro pago elegible preexistente, pero el test asume que su pago siempre aparece en `data[0]`.
+- Se limpiaron las solicitudes temporales por los siete titulos exactos definidos en el script existente.
+- La repeticion de `pnpm db:test:rls` paso.
+- Se verifico por consulta que quedaron cero solicitudes y cero postulaciones relacionadas con los titulos temporales del smoke.
+- No se modificaron codigo, contratos, migraciones, RLS, seeds ni configuracion para cerrar este checkpoint.
+
 ## Decisiones tecnicas tomadas
 
 - Monorepo con pnpm workspaces.
@@ -270,15 +285,18 @@ RPCs principales:
 - Hay textos con mojibake en algunos archivos, por ejemplo `packages/domain/src/index.ts` y `apps/mobile/src/lib/supabase.ts`.
 - `apps/mobile/src/features/applications/job-panel.tsx` conserva texto/flujo legacy sobre presupuestos y pagos; los paneles principales actuales estan en `apps/mobile/src/features/jobs/*`.
 - Los docs de arquitectura estan parcialmente desactualizados frente al estado real implementado.
+- `supabase/tests/rls-smoke.ts` asume que el pago creado por la prueba es la primera fila retornada por `release_eligible_payments()`. Si existen otros pagos elegibles, la RPC puede liberarlos correctamente y el smoke fallar por orden no garantizado. Conviene buscar por `acceptedPaymentId` en vez de usar `data[0]` en una tarea separada.
 
 ## Pruebas realizadas
 
-Ultima validacion conocida del estado actual:
+Validacion del 2026-07-27:
 
 - `pnpm lint`: paso.
 - `pnpm typecheck`: paso.
 - `pnpm test`: paso.
 - `pnpm db:test:rls`: paso.
+
+El smoke RLS paso despues de recrear usuarios demo y retirar fixtures temporales de un intento previo. La fragilidad de orden indicada en errores conocidos no invalida el comportamiento observado de la RPC, pero debe corregirse para que la prueba sea aislada frente a datos locales preexistentes.
 
 Cobertura destacada:
 
@@ -376,8 +394,8 @@ pnpm exec supabase status
 
 ## Proximos pasos recomendados
 
-1. Corregir mojibake restante en dominio/lib moviles y asegurar UTF-8 consistente.
-2. Actualizar `docs/architecture/*` para reflejar chat, jobs, pagos mock y reviews.
+1. Hacer robusta la asercion de `release_eligible_payments()` en `supabase/tests/rls-smoke.ts`, buscando el pago por id y sin depender del orden de retorno.
+2. Actualizar `README.md` y `docs/architecture/*` para reflejar chat, jobs, pagos mock y reviews.
 3. Completar deep link de recuperacion de contrasena.
 4. Decidir e implementar carga real de avatar/adjuntos con Storage seguro.
 5. Consolidar o retirar `apps/mobile/src/features/applications/job-panel.tsx` si ya no es ruta primaria.

@@ -15,6 +15,8 @@ import { FormField } from '@/components/ui/form-field';
 import { TextInput } from '@/components/ui/text-input';
 import { colors } from '@/components/ui/theme';
 import { DatePickerField } from '@/features/jobs/date-picker-field';
+import { AttachmentPicker } from '@/features/attachments/components';
+import type { PendingAttachment } from '@/features/attachments/api';
 
 interface ServiceRequestFormProps {
   categories: Category[];
@@ -22,6 +24,8 @@ interface ServiceRequestFormProps {
   categoriesLoading?: boolean | undefined;
   initialValues: CreateServiceRequestInput;
   loading?: boolean;
+  attachments?: PendingAttachment[];
+  onAttachmentsChange?: (attachments: PendingAttachment[]) => void;
   onRetryCategories?: (() => void) | undefined;
   onSubmit: (values: CreateServiceRequestInput) => Promise<void>;
 }
@@ -65,11 +69,13 @@ function ChoiceGroup<TValue extends string>({
 }
 
 export function ServiceRequestForm({
+  attachments = [],
   categories,
   categoriesError,
   categoriesLoading = false,
   initialValues,
   loading = false,
+  onAttachmentsChange = () => undefined,
   onRetryCategories,
   onSubmit,
 }: ServiceRequestFormProps) {
@@ -270,6 +276,7 @@ export function ServiceRequestForm({
           </FormField>
         )}
       />
+      <AttachmentPicker disabled={saving} onChange={onAttachmentsChange} value={attachments} />
       <Button disabled={saving} onPress={handleSubmit(onSubmit)}>
         {saving ? 'Publicando...' : 'Publicar solicitud'}
       </Button>

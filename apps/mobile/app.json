@@ -5,6 +5,15 @@
     "scheme": "casaticket",
     "version": "0.1.0",
     "orientation": "portrait",
-    "plugins": ["expo-router"]
+    "plugins": [
+      "expo-router",
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "CasaTicket necesita la cámara para adjuntar evidencias del trabajo.",
+          "photosPermission": "CasaTicket necesita acceso a tus fotos para adjuntar evidencias."
+        }
+      ]
+    ]
   }
 }

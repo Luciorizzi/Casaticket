@@ -23,3 +23,7 @@ port = 54323
 [local_smtp]
 enabled = true
 port = 54324
+
+[analytics]
+enabled = true
+port = 55427

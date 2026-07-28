@@ -1,9 +1,11 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
+import { Ionicons } from '@expo/vector-icons';
 import { router, type Href, useFocusEffect } from 'expo-router';
 import {
   ActivityIndicator,
   Alert,
+  FlatList,
   Modal,
   Pressable,
   RefreshControl,
@@ -42,7 +44,7 @@ import {
   getVerificationLabel,
   StatusBadge,
 } from '@/components/ui/status-badge';
-import { PrimaryActionBar, StatusHeader } from '@/components/ui/workflow';
+import { PrimaryActionBar, ScreenHeader, StatusHeader } from '@/components/ui/workflow';
 import { ensureApplicationConversation } from '@/features/applications/chat-api';
 import { useAuthSession } from '@/features/auth/auth-provider';
 import { listActiveCategories } from '@/features/categories/api';
@@ -64,9 +66,11 @@ import {
 } from '@/features/professional/opportunities-api';
 import { getMobileJobStatusLabel } from '@/features/jobs/status-labels';
 import { ProfessionalProfileForm } from '@/features/professional/professional-profile-form';
+import { ProfessionalProfileHubScreen } from '@/features/professional/professional-profile-screens';
 import { saveProfessionalOnboarding } from '@/features/profile/api';
 import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
 import { queryKeys } from '@/lib/query-keys';
+import { AttachmentGallerySection } from '@/features/attachments/components';
 
 export function ProfessionalOnboardingScreen() {
   return (
@@ -267,12 +271,9 @@ export function ProfessionalOpportunitiesScreen() {
       refreshInFlightRef.current = false;
     });
   }, [applicationsQueryKey, opportunitiesQueryKey, professionalId, queryClient]);
-  const hasActiveFilters = categoryFilter !== 'all' || cityFilter !== 'all' || urgencyFilter !== 'all';
-  const selectedFilterSummary = [
-    getOptionLabel(categoryFilters, categoryFilter),
-    getOptionLabel(cityFilters, cityFilter),
-    getOptionLabel(urgencyFilters, urgencyFilter),
-  ].join(' · ');
+  const activeFilterCount = [categoryFilter, cityFilter, urgencyFilter].filter(
+    (filter) => filter !== 'all',
+  ).length;
 
   useFocusEffect(
     useCallback(() => {
@@ -318,56 +319,72 @@ export function ProfessionalOpportunitiesScreen() {
   }
 
   return (
-    <Screen
-      scroll={false}
-      subtitle="Solicitudes publicadas compatibles con tus rubros. No mostramos dirección exacta ni datos del cliente."
-      title="Oportunidades"
-    >
-      <ScrollView
-        contentContainerStyle={styles.opportunitiesScrollContent}
+    <Screen scroll={false}>
+      <FlatList
+        contentContainerStyle={styles.opportunitiesListContent}
+        data={filteredOpportunities}
+        ItemSeparatorComponent={() => <View style={styles.opportunitySeparator} />}
         keyboardShouldPersistTaps="handled"
+        keyExtractor={(opportunity) => opportunity.requestId}
+        ListEmptyComponent={
+          <EmptyState
+            description="Probá cambiar los filtros o actualizar la lista."
+            title="No hay oportunidades disponibles."
+          />
+        }
+        ListHeaderComponent={
+          <View style={styles.opportunitiesListHeader}>
+            <View style={styles.opportunitiesHeader} testID="opportunities-header">
+              <View style={styles.opportunitiesHeaderCopy}>
+                <Text style={styles.opportunitiesTitle}>Oportunidades</Text>
+                <Text style={styles.opportunitiesSubtitle}>
+                  Solicitudes publicadas compatibles con tus rubros.
+                </Text>
+                <Text numberOfLines={1} style={styles.opportunitiesPrivacy}>
+                  No mostramos dirección exacta ni datos del cliente.
+                </Text>
+              </View>
+              <RefreshIconButton
+                disabled={isRefreshing}
+                loading={isRefreshing}
+                onRefresh={refreshOpportunities}
+              />
+            </View>
+            <OpportunityFilters
+              activeFilterCount={activeFilterCount}
+              categoryFilter={categoryFilter}
+              categoryFilters={categoryFilters}
+              cityFilter={cityFilter}
+              cityFilters={cityFilters}
+              onCategoryChange={setCategoryFilter}
+              onCityChange={setCityFilter}
+              onClearCategory={() => setCategoryFilter('all')}
+              onClearCity={() => setCityFilter('all')}
+              onClearFilters={() => {
+                setCategoryFilter('all');
+                setCityFilter('all');
+                setUrgencyFilter('all');
+              }}
+              onClearUrgency={() => setUrgencyFilter('all')}
+              onUrgencyChange={setUrgencyFilter}
+              urgencyFilter={urgencyFilter}
+              urgencyFilters={urgencyFilters}
+            />
+            <OpportunityListHeader count={filteredOpportunities.length} />
+          </View>
+        }
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={refreshOpportunities} tintColor="#bb5e3c" />
         }
-      >
-        <OpportunityFilters
-          categoryFilter={categoryFilter}
-          categoryFilters={categoryFilters}
-          cityFilter={cityFilter}
-          cityFilters={cityFilters}
-          hasActiveFilters={hasActiveFilters}
-          onCategoryChange={setCategoryFilter}
-          onCityChange={setCityFilter}
-          onClearFilters={() => {
-            setCategoryFilter('all');
-            setCityFilter('all');
-            setUrgencyFilter('all');
-          }}
-          onRefresh={refreshOpportunities}
-          onUrgencyChange={setUrgencyFilter}
-          refreshDisabled={isRefreshing}
-          refreshLoading={isRefreshing}
-          selectedSummary={selectedFilterSummary}
-          urgencyFilter={urgencyFilter}
-          urgencyFilters={urgencyFilters}
-        />
-        <OpportunityListHeader count={filteredOpportunities.length} />
-        {filteredOpportunities.length === 0 ? (
-          <EmptyState
-            description="Prob? cambiar los filtros o actualizar la lista."
-            title="No hay oportunidades disponibles."
+        renderItem={({ item: opportunity }) => (
+          <OpportunityListItem
+            application={activeApplicationsByRequest.get(opportunity.requestId) ?? null}
+            categoryName={getOpportunityCategoryName(opportunity, categoriesById)}
+            opportunity={opportunity}
           />
-        ) : (
-          filteredOpportunities.map((opportunity) => (
-            <OpportunityListItem
-              application={activeApplicationsByRequest.get(opportunity.requestId) ?? null}
-              categoryName={getOpportunityCategoryName(opportunity, categoriesById)}
-              key={opportunity.requestId}
-              opportunity={opportunity}
-            />
-          ))
         )}
-      </ScrollView>
+        showsVerticalScrollIndicator={false}
+      />
     </Screen>
   );
 }
@@ -503,8 +520,16 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
   };
 
   return (
-    <Screen subtitle="Detalle seguro de la solicitud publicada." title={opportunity.title}>
+    <Screen>
+      <ScreenHeader
+        backAction={<ProfessionalOpportunityBackButton />}
+        subtitle="Detalle seguro de la solicitud publicada."
+        title={opportunity.title}
+      />
       <OpportunityDetailCard opportunity={opportunity} />
+      <Card>
+        <AttachmentGallerySection serviceRequestId={opportunity.requestId} title="Fotos del problema" type="request_evidence" />
+      </Card>
       {application ? (
         <>
           <ApplicationSummary application={application} />
@@ -559,6 +584,29 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
         <ErrorState message="No pudimos retirar la postulación." title="Retiro fallido" />
       ) : null}
     </Screen>
+  );
+}
+
+function ProfessionalOpportunityBackButton() {
+  const handleBack = () => {
+    if (router.canGoBack()) {
+      router.back();
+      return;
+    }
+
+    router.replace('/(professional)/opportunities');
+  };
+
+  return (
+    <Pressable
+      accessibilityLabel="Volver a oportunidades"
+      accessibilityRole="button"
+      onPress={handleBack}
+      style={styles.opportunityBackButton}
+    >
+      <Ionicons color="#bb5e3c" name="chevron-back" size={22} />
+      <Text style={styles.opportunityBackLabel}>Volver</Text>
+    </Pressable>
   );
 }
 
@@ -681,13 +729,7 @@ export function ProfessionalJobsScreen() {
 }
 
 export function ProfessionalProfileScreen() {
-  return (
-    <ProfessionalProfileEditorScreen
-      mode="edit"
-      subtitle="Editá tu perfil profesional, tus rubros y tu disponibilidad."
-      title="Perfil"
-    />
-  );
+  return <ProfessionalProfileHubScreen />;
 }
 
 function ProfessionalProfileEditorScreen({
@@ -816,82 +858,86 @@ function ProfessionalProfileEditorScreen({
 }
 
 function OpportunityFilters({
+  activeFilterCount,
   categoryFilter,
   categoryFilters,
   cityFilter,
   cityFilters,
-  hasActiveFilters,
   onCategoryChange,
   onCityChange,
+  onClearCategory,
+  onClearCity,
   onClearFilters,
-  onRefresh,
+  onClearUrgency,
   onUrgencyChange,
-  refreshDisabled,
-  refreshLoading,
-  selectedSummary,
   urgencyFilter,
   urgencyFilters,
 }: {
+  activeFilterCount: number;
   categoryFilter: string;
   categoryFilters: FilterOption[];
   cityFilter: string;
   cityFilters: FilterOption[];
-  hasActiveFilters: boolean;
   onCategoryChange: (value: string) => void;
   onCityChange: (value: string) => void;
+  onClearCategory: () => void;
+  onClearCity: () => void;
   onClearFilters: () => void;
-  onRefresh: () => void;
+  onClearUrgency: () => void;
   onUrgencyChange: (value: string) => void;
-  refreshDisabled: boolean;
-  refreshLoading: boolean;
-  selectedSummary: string;
   urgencyFilter: string;
   urgencyFilters: FilterOption[];
 }) {
   return (
-    <Card>
-      <View style={styles.filterToolbar}>
+    <View style={styles.filterBar}>
+      <ScrollView
+        contentContainerStyle={styles.filterChips}
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.filterChipsScroll}
+      >
         <SearchableFilter
           label="Categoría"
+          onClear={onClearCategory}
           onSelect={onCategoryChange}
           options={categoryFilters}
           selectedValue={categoryFilter}
         />
         <SearchableFilter
           label="Ciudad"
+          onClear={onClearCity}
           onSelect={onCityChange}
           options={cityFilters}
           selectedValue={cityFilter}
         />
         <SearchableFilter
           label="Urgencia"
+          onClear={onClearUrgency}
           onSelect={onUrgencyChange}
           options={urgencyFilters}
           searchable={false}
           selectedValue={urgencyFilter}
         />
-        <RefreshIconButton disabled={refreshDisabled} loading={refreshLoading} onRefresh={onRefresh} />
-      </View>
-      <Text numberOfLines={1} style={styles.filterSummary}>
-        {selectedSummary}
-      </Text>
-      {hasActiveFilters ? (
+      </ScrollView>
+      {activeFilterCount >= 2 ? (
         <Pressable accessibilityRole="button" onPress={onClearFilters} style={styles.clearFiltersButton}>
-          <Text style={styles.clearFiltersLabel}>Limpiar filtros</Text>
+          <Text style={styles.clearFiltersLabel}>Limpiar</Text>
         </Pressable>
       ) : null}
-    </Card>
+    </View>
   );
 }
 
 function SearchableFilter({
   label,
+  onClear,
   onSelect,
   options,
   searchable = true,
   selectedValue,
 }: {
   label: string;
+  onClear: () => void;
   onSelect: (value: string) => void;
   options: FilterOption[];
   searchable?: boolean;
@@ -900,6 +946,8 @@ function SearchableFilter({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const selectedLabel = getOptionLabel(options, selectedValue);
+  const active = selectedValue !== 'all';
+  const normalizedLabel = label.toLocaleLowerCase('es');
   const filteredOptions = options.filter((option) => {
     const normalizedSearch = normalizeCityName(search);
 
@@ -914,20 +962,34 @@ function SearchableFilter({
 
   return (
     <>
-      <Pressable
-        accessibilityLabel={`Filtrar por ${label}`}
-        accessibilityRole="button"
-        onPress={() => {
-          setSearch('');
-          setOpen(true);
-        }}
-        style={styles.filterSelect}
-      >
-        <Text numberOfLines={1} style={styles.filterSelectLabel}>
-          {selectedLabel}
-        </Text>
-        <Text style={styles.filterSelectChevron}>⌄</Text>
-      </Pressable>
+      <View style={[styles.filterChip, active ? styles.filterChipActive : null]}>
+        <Pressable
+          accessibilityLabel={`Filtrar por ${normalizedLabel}`}
+          accessibilityRole="button"
+          hitSlop={4}
+          onPress={() => {
+            setSearch('');
+            setOpen(true);
+          }}
+          style={styles.filterChipSelector}
+        >
+          <Text numberOfLines={1} style={[styles.filterChipLabel, active ? styles.filterChipLabelActive : null]}>
+            {active ? selectedLabel : label}
+          </Text>
+          {!active ? <Ionicons color="#8c765d" name="chevron-down" size={16} /> : null}
+        </Pressable>
+        {active ? (
+          <Pressable
+            accessibilityLabel={`Limpiar filtro de ${normalizedLabel}`}
+            accessibilityRole="button"
+            hitSlop={8}
+            onPress={onClear}
+            style={styles.filterChipClear}
+          >
+            <Ionicons color="#bb5e3c" name="close" size={17} />
+          </Pressable>
+        ) : null}
+      </View>
       <Modal animationType="fade" onRequestClose={() => setOpen(false)} transparent visible={open}>
         <View style={styles.modalOverlay}>
           <View style={styles.filterModalCard}>
@@ -978,7 +1040,9 @@ function SearchableFilter({
 function OpportunityListHeader({ count }: { count: number }) {
   return (
     <View style={styles.opportunityHeader}>
-      <Text style={styles.opportunityCount}>{count} oportunidades</Text>
+      <Text style={styles.opportunityCount}>
+        {count} {count === 1 ? 'oportunidad' : 'oportunidades'}
+      </Text>
     </View>
   );
 }
@@ -1004,7 +1068,7 @@ function RefreshIconButton({
       {loading ? (
         <ActivityIndicator color="#bb5e3c" size="small" />
       ) : (
-        <Text style={styles.refreshIcon}>↻</Text>
+        <Ionicons color="#bb5e3c" name="refresh" size={22} />
       )}
     </Pressable>
   );
@@ -1025,10 +1089,12 @@ function OpportunityListItem({
       onPress={() => router.push(`/(professional)/opportunities/${opportunity.requestId}` as Href)}
       testID="professional-opportunity-card"
     >
-      <Card>
+      <View style={styles.opportunityCard}>
         <View style={styles.opportunityRow}>
-          <View style={styles.opportunityStatusDot} />
           <View style={styles.opportunityCopy}>
+            <Text numberOfLines={1} style={styles.opportunityCategory}>
+              {categoryName}
+            </Text>
             <View style={styles.opportunityTitleRow}>
               <Text numberOfLines={1} style={styles.requestTitle} testID="opportunity-card-title">
                 {opportunity.title}
@@ -1038,12 +1104,18 @@ function OpportunityListItem({
               ) : null}
             </View>
             <Text numberOfLines={1} style={styles.requestMeta}>
-              {categoryName} · {opportunity.city}
+              {opportunity.city} · {getServiceRequestUrgencyLabel(opportunity.urgency)}
             </Text>
             <Text numberOfLines={1} style={styles.requestMeta}>
-              {getServiceRequestUrgencyLabel(opportunity.urgency)} · {getServiceRequestTypeLabel(opportunity.requestType)}
+              {getServiceRequestTypeLabel(opportunity.requestType)}
             </Text>
-            <Text numberOfLines={1} style={styles.requestDescriptionCompact}>
+            {opportunity.attachmentCount ? (
+              <View style={styles.opportunityAttachmentCount}>
+                <Ionicons color="#8c765d" name="images-outline" size={15} />
+                <Text style={styles.requestMeta}>{opportunity.attachmentCount}</Text>
+              </View>
+            ) : null}
+            <Text numberOfLines={2} style={styles.requestDescriptionCompact}>
               {opportunity.description}
             </Text>
             <Text numberOfLines={1} style={styles.requestMeta}>
@@ -1052,7 +1124,7 @@ function OpportunityListItem({
           </View>
           <Text style={styles.chevron}>›</Text>
         </View>
-      </Card>
+      </View>
     </Pressable>
   );
 }
@@ -1540,44 +1612,93 @@ const styles = StyleSheet.create({
   requestCard: {
     gap: 10,
   },
-  opportunitiesScrollContent: {
-    gap: 16,
+  opportunitiesListContent: {
     paddingBottom: 24,
   },
-  filterToolbar: {
+  opportunitiesListHeader: {
+    gap: 12,
+    marginBottom: 10,
+  },
+  opportunitiesHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  opportunitiesHeaderCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  opportunitiesTitle: {
+    color: '#1d1811',
+    fontSize: 28,
+    fontWeight: '800',
+    lineHeight: 34,
+  },
+  opportunitiesSubtitle: {
+    color: '#675a49',
+    fontSize: 15,
+    lineHeight: 21,
+  },
+  opportunitiesPrivacy: {
+    color: '#8c765d',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  filterBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
   },
-  filterSelect: {
-    minHeight: 40,
+  filterChips: {
+    gap: 8,
+    paddingRight: 4,
+  },
+  filterChipsScroll: {
     flex: 1,
+  },
+  filterChip: {
+    minHeight: 44,
+    maxWidth: 220,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 6,
     borderRadius: 999,
     borderWidth: 1,
     borderColor: '#dccbb1',
     backgroundColor: '#ffffff',
-    paddingHorizontal: 12,
   },
-  filterSelectLabel: {
-    flex: 1,
-    fontSize: 13,
+  filterChipActive: {
+    borderColor: '#bb5e3c',
+    backgroundColor: '#f2ddd1',
+  },
+  filterChipSelector: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingLeft: 14,
+    paddingRight: 12,
+  },
+  filterChipLabel: {
+    flexShrink: 1,
+    fontSize: 14,
     fontWeight: '700',
     color: '#1d1811',
   },
-  filterSelectChevron: {
-    fontSize: 16,
-    color: '#9c8a73',
+  filterChipLabelActive: {
+    color: '#9b472b',
   },
-  filterSummary: {
-    fontSize: 13,
-    color: '#675a49',
+  filterChipClear: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingRight: 8,
   },
   clearFiltersButton: {
-    alignSelf: 'flex-start',
+    minHeight: 44,
+    justifyContent: 'center',
+    paddingHorizontal: 4,
   },
   clearFiltersLabel: {
     fontSize: 13,
@@ -1632,9 +1753,9 @@ const styles = StyleSheet.create({
     color: '#675a49',
   },
   refreshIconButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 999,
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
@@ -1644,25 +1765,52 @@ const styles = StyleSheet.create({
   refreshIconButtonDisabled: {
     opacity: 0.5,
   },
-  refreshIcon: {
-    fontSize: 22,
-    color: '#bb5e3c',
-    fontWeight: '800',
-  },
   opportunityRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
-  opportunityStatusDot: {
-    width: 10,
+  opportunityCard: {
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#e4d5bf',
+    backgroundColor: '#fffaf1',
+    paddingHorizontal: 14,
+    paddingVertical: 13,
+  },
+  opportunitySeparator: {
     height: 10,
-    borderRadius: 999,
-    backgroundColor: '#2f7d57',
   },
   opportunityCopy: {
     flex: 1,
     gap: 4,
+  },
+  opportunityCategory: {
+    color: '#bb5e3c',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.7,
+    textTransform: 'uppercase',
+  },
+  opportunityAttachmentCount: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 5,
+  },
+  opportunityBackButton: {
+    minHeight: 44,
+    minWidth: 44,
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    flexDirection: 'row',
+    gap: 4,
+    justifyContent: 'center',
+    paddingRight: 8,
+  },
+  opportunityBackLabel: {
+    color: '#bb5e3c',
+    fontSize: 15,
+    fontWeight: '700',
   },
   opportunityTitleRow: {
     flexDirection: 'row',

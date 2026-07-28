@@ -44,6 +44,7 @@ import {
   retryMockPayment,
 } from '@/features/jobs/api';
 import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
+import { AttachmentGallerySection } from '@/features/attachments/components';
 
 function formatMoney(value: number): string {
   return new Intl.NumberFormat('es-AR', {
@@ -365,6 +366,8 @@ export function CustomerJobDetailScreen({ jobId }: { jobId: string }) {
         title="Progreso del trabajo"
       />
       <CustomerJobPanel requestId={jobQuery.data.requestId} />
+      <Card><AttachmentGallerySection jobId={jobId} title="Evidencia del diagnóstico" type="diagnosis_evidence" /></Card>
+      <Card><AttachmentGallerySection jobId={jobId} title="Evidencia de finalización" type="completion_evidence" /></Card>
     </Screen>
   );
 }

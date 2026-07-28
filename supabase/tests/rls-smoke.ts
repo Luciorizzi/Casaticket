@@ -398,6 +398,38 @@ async function main() {
     throw new Error('Professional opportunity unexpectedly exposed private customer data.');
   }
 
+  const registeredRequestAttachment = await customerClient.rpc('register_attachment', {
+    p_service_request_id: ownServiceRequestInsert.data.id,
+    p_job_id: null,
+    p_attachment_type: 'request_evidence',
+    p_mime_type: 'image/jpeg',
+    p_file_size_bytes: 4,
+    p_sort_order: 0,
+    p_file_extension: 'jpg',
+  });
+  const requestAttachment = registeredRequestAttachment.data?.[0] as { id: string; storage_path: string } | undefined;
+  if (registeredRequestAttachment.error || !requestAttachment) {
+    throw new Error(`Customer could not register request evidence: ${registeredRequestAttachment.error?.message ?? 'missing row'}`);
+  }
+
+  const requestAttachmentUpload = await customerClient.storage
+    .from('service-attachments')
+    .upload(requestAttachment.storage_path, new Uint8Array([1, 2, 3, 4]), { contentType: 'image/jpeg' });
+  if (requestAttachmentUpload.error) throw new Error(`Customer could not upload private evidence: ${requestAttachmentUpload.error.message}`);
+
+  const compatibleAttachmentRead = await professionalClient.from('attachments').select('id').eq('id', requestAttachment.id);
+  if (compatibleAttachmentRead.error || compatibleAttachmentRead.data?.length !== 1) {
+    throw new Error('Compatible professional could not view request evidence metadata.');
+  }
+
+  const incompatibleAttachmentRead = await bootstrapProfessionalClient.from('attachments').select('id').eq('id', requestAttachment.id);
+  if (incompatibleAttachmentRead.error || incompatibleAttachmentRead.data?.length !== 0) {
+    throw new Error('Incompatible professional unexpectedly viewed request evidence.');
+  }
+
+  const foreignAttachmentDelete = await bootstrapProfessionalClient.rpc('delete_own_attachment', { p_attachment_id: requestAttachment.id });
+  if (!foreignAttachmentDelete.error) throw new Error('Foreign user unexpectedly deleted customer evidence.');
+
   const incompatibleOpportunityRead = await bootstrapProfessionalClient.rpc('list_professional_opportunities', {
     p_professional_id: bootstrapProfessionalProfile.data.id,
   });
@@ -1280,6 +1312,23 @@ async function main() {
     throw new Error(`Customer could not confirm visit: ${confirmedVisit.error?.message ?? 'unexpected status'}`);
   }
 
+  const diagnosisAttachment = await professionalClient.rpc('register_attachment', {
+    p_service_request_id: null,
+    p_job_id: selectedJob.job_id,
+    p_attachment_type: 'diagnosis_evidence',
+    p_mime_type: 'image/jpeg',
+    p_file_size_bytes: 4,
+    p_sort_order: 0,
+    p_file_extension: 'jpg',
+  });
+  if (diagnosisAttachment.error || !diagnosisAttachment.data?.[0]) {
+    throw new Error(`Selected professional could not register diagnosis evidence: ${diagnosisAttachment.error?.message ?? 'missing row'}`);
+  }
+  const customerDiagnosisRead = await customerClient.from('attachments').select('id').eq('id', diagnosisAttachment.data[0].id);
+  if (customerDiagnosisRead.error || customerDiagnosisRead.data?.length !== 1) {
+    throw new Error('Customer could not view diagnosis evidence.');
+  }
+
   const diagnosis = await professionalClient.rpc('record_job_diagnosis', {
     p_job_id: selectedJob.job_id,
     p_diagnosis_text: 'La instalacion requiere reemplazo de piezas y ajuste general con materiales menores.',
@@ -1581,6 +1630,19 @@ async function main() {
 
   if (startedJob.error || startedJob.data?.[0]?.status !== 'in_progress' || !startedJob.data?.[0]?.started_at) {
     throw new Error(`Selected professional could not start job: ${startedJob.error?.message ?? 'unexpected status'}`);
+  }
+
+  const completionAttachment = await professionalClient.rpc('register_attachment', {
+    p_service_request_id: null,
+    p_job_id: selectedJob.job_id,
+    p_attachment_type: 'completion_evidence',
+    p_mime_type: 'image/jpeg',
+    p_file_size_bytes: 4,
+    p_sort_order: 0,
+    p_file_extension: 'jpg',
+  });
+  if (completionAttachment.error || !completionAttachment.data?.[0]) {
+    throw new Error(`Selected professional could not register completion evidence: ${completionAttachment.error?.message ?? 'missing row'}`);
   }
 
   const customerCompletionAttempt = await customerClient.rpc('mark_job_completed_by_professional', {
@@ -1948,6 +2010,11 @@ async function main() {
   if (!cancelledApplicationInsert.error) {
     throw new Error('Professional unexpectedly applied to a cancelled service request.');
   }
+
+  const requestAttachmentRemove = await customerClient.storage.from('service-attachments').remove([requestAttachment.storage_path]);
+  if (requestAttachmentRemove.error) throw new Error(`Customer could not remove own evidence object: ${requestAttachmentRemove.error.message}`);
+  const requestAttachmentDelete = await customerClient.rpc('delete_own_attachment', { p_attachment_id: requestAttachment.id });
+  if (requestAttachmentDelete.error) throw new Error(`Customer could not delete own evidence row: ${requestAttachmentDelete.error.message}`);
 
   await cleanupSmokeServiceRequests(adminClient);
 

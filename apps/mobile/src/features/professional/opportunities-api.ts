@@ -7,6 +7,7 @@ import type { CreateApplicationInput } from '@casaticket/validation';
 
 import { logDevelopmentSupabaseError } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
+import { getRequestAttachmentCounts } from '@/features/attachments/api';
 
 interface OpportunityRpcRow {
   request_id: string;
@@ -189,7 +190,9 @@ export async function listProfessionalOpportunities(
     throw error;
   }
 
-  return ((data ?? []) as OpportunityRpcRow[]).map((row) => mapOpportunity(row));
+  const opportunities = ((data ?? []) as OpportunityRpcRow[]).map((row) => mapOpportunity(row));
+  const counts = await getRequestAttachmentCounts(opportunities.map((opportunity) => opportunity.requestId));
+  return opportunities.map((opportunity) => ({ ...opportunity, attachmentCount: counts.get(opportunity.requestId) ?? 0 }));
 }
 
 export async function getProfessionalOpportunity(
@@ -213,7 +216,9 @@ export async function getProfessionalOpportunity(
     throw new Error('No encontramos esta oportunidad disponible para tu perfil.');
   }
 
-  return mapOpportunity(firstRow);
+  const opportunity = mapOpportunity(firstRow);
+  const counts = await getRequestAttachmentCounts([opportunity.requestId]);
+  return { ...opportunity, attachmentCount: counts.get(opportunity.requestId) ?? 0 };
 }
 
 export async function listOwnApplications(professionalId: string): Promise<ProfessionalApplication[]> {

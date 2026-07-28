@@ -12,8 +12,6 @@ export interface JobProgressRowItem {
   onPress?: (() => void) | undefined;
 }
 
-const noop = () => undefined;
-
 export function JobProgressList({ rows }: { rows: JobProgressRowItem[] }) {
   return (
     <View style={styles.list}>
@@ -22,8 +20,12 @@ export function JobProgressList({ rows }: { rows: JobProgressRowItem[] }) {
           accessibilityLabel={`${row.title}: ${row.subtitle}`}
           accessibilityRole="button"
           key={row.id}
-          onPress={row.onPress ?? noop}
-          style={[styles.row, index < rows.length - 1 ? styles.rowBorder : null]}
+          onPress={row.onPress}
+          style={({ pressed }) => [
+            styles.row,
+            index < rows.length - 1 ? styles.rowBorder : null,
+            pressed ? styles.rowPressed : null,
+          ]}
         >
           <View style={[styles.indicator, indicatorStyles[row.state]]} />
           <View style={styles.copy}>
@@ -75,6 +77,10 @@ const styles = StyleSheet.create({
   rowBorder: {
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+  },
+  rowPressed: {
+    backgroundColor: colors.accentSoft,
+    opacity: 0.82,
   },
   indicator: {
     width: 10,

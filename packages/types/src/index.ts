@@ -154,6 +154,7 @@ export interface ServiceRequestWithCategory extends ServiceRequest {
 }
 
 export interface ProfessionalOpportunity {
+  attachmentCount?: number;
   requestId: string;
   title: string;
   description: string;

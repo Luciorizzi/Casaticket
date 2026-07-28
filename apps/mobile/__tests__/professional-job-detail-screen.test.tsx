@@ -6,6 +6,9 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { Alert } from 'react-native';
 
 const mockBack = jest.fn();
+const mockPush = jest.fn();
+const mockReplace = jest.fn();
+const mockCanGoBack = jest.fn();
 const mockCompleteProfessionalJob = jest.fn();
 const mockCreateJobReview = jest.fn();
 const mockCreateProfessionalJobQuote = jest.fn();
@@ -22,6 +25,9 @@ let mockDatePickerDate = new Date(2099, 6, 22);
 jest.mock('expo-router', () => ({
   router: {
     back: (...args: unknown[]) => mockBack(...args),
+    canGoBack: (...args: unknown[]) => mockCanGoBack(...args),
+    push: (...args: unknown[]) => mockPush(...args),
+    replace: (...args: unknown[]) => mockReplace(...args),
   },
 }));
 
@@ -58,6 +64,7 @@ jest.mock('@/features/jobs/api', () => ({
 }));
 
 import { ProfessionalJobDetailScreen } from '@/features/jobs/professional-job-detail-screen';
+import { ProfessionalJobStageScreen } from '@/features/jobs/professional-job-stage-screen';
 
 const activeQueryClients: QueryClient[] = [];
 
@@ -189,6 +196,7 @@ describe('professional job detail screen', () => {
       buttons?.find((button) => button.text !== 'Volver')?.onPress?.();
     });
     mockDatePickerDate = new Date(2099, 6, 22);
+    mockCanGoBack.mockReturnValue(true);
     mockGetProfessionalJobById.mockResolvedValue(createJob());
     mockGetJobPayment.mockResolvedValue(null);
     mockListJobReviews.mockResolvedValue([]);
@@ -241,6 +249,44 @@ describe('professional job detail screen', () => {
     });
 
     expect(mockGetProfessionalJobById).toHaveBeenCalledWith('job-1');
+  });
+
+  it('navigates every progress row with the current job identifiers, including completed stages', async () => {
+    mockGetProfessionalJobById.mockResolvedValueOnce(createJob({ status: 'completed' }));
+    mockListJobQuotes.mockResolvedValueOnce([createQuote({ status: 'accepted' })]);
+    mockGetJobPayment.mockResolvedValueOnce(createPayment({ status: 'released' }));
+    renderWithQueryClient(<ProfessionalJobDetailScreen jobId="job-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText(/Profesional:/)).toBeTruthy());
+    const stages = [
+      ['Profesional', 'professional'], ['Visita', 'visit'], ['Diagnóstico', 'diagnosis'],
+      ['Presupuesto', 'quote'], ['Pago', 'payment'], ['Ejecución', 'execution'], ['Finalización', 'completion'],
+    ] as const;
+    for (const [label, stage] of stages) {
+      fireEvent.press(screen.getByLabelText(new RegExp(`^${label}:`)));
+      expect(mockPush).toHaveBeenLastCalledWith(expect.objectContaining({
+        params: expect.objectContaining({ jobId: 'job-1' }),
+        pathname: `/(professional)/jobs/[jobId]/${stage}`,
+      }));
+    }
+    expect(mockPush).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ applicationId: 'application-1', professionalId: 'professional-1' }) }));
+    expect(mockPush).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ quoteId: 'quote-1' }) }));
+    expect(mockPush).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ paymentId: 'payment-1' }) }));
+  });
+
+  it('stage back uses navigation history when available', async () => {
+    renderWithQueryClient(<ProfessionalJobStageScreen jobId="job-1" stage="visit" />);
+    await waitFor(() => expect(screen.getByLabelText('Volver a gestionar trabajo')).toBeTruthy());
+    fireEvent.press(screen.getByLabelText('Volver a gestionar trabajo'));
+    expect(mockBack).toHaveBeenCalled();
+  });
+
+  it('stage back falls back to the current job detail without history', async () => {
+    mockCanGoBack.mockReturnValue(false);
+    renderWithQueryClient(<ProfessionalJobStageScreen jobId="job-1" stage="visit" />);
+    await waitFor(() => expect(screen.getByLabelText('Volver a gestionar trabajo')).toBeTruthy());
+    fireEvent.press(screen.getByLabelText('Volver a gestionar trabajo'));
+    expect(mockReplace).toHaveBeenCalledWith('/(professional)/jobs/job-1');
   });
 
   it('shows an access error when the professional is not selected', async () => {

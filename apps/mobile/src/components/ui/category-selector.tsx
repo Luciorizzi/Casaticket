@@ -1,5 +1,6 @@
 import type { Category } from '@casaticket/types';
 
+import { Ionicons } from '@expo/vector-icons';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { ErrorState } from '@/components/ui/error-state';
@@ -49,11 +50,21 @@ export function CategorySelector({
 
         return (
           <Pressable
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: selected }}
             key={category.id}
             onPress={() => onToggle(category.id)}
             style={[styles.item, selected ? styles.itemSelected : null]}
           >
-            <Text style={[styles.label, selected ? styles.labelSelected : null]}>{category.name}</Text>
+            <View style={styles.itemCopy}>
+              <Text style={[styles.label, selected ? styles.labelSelected : null]}>{category.name}</Text>
+              {category.description ? (
+                <Text numberOfLines={2} style={styles.description}>{category.description}</Text>
+              ) : null}
+            </View>
+            <View style={[styles.check, selected ? styles.checkSelected : null]}>
+              {selected ? <Ionicons color="#ffffff" name="checkmark" size={16} /> : null}
+            </View>
           </Pressable>
         );
       })}
@@ -63,17 +74,20 @@ export function CategorySelector({
 
 const styles = StyleSheet.create({
   grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 10,
   },
   item: {
-    borderRadius: 999,
+    minHeight: 58,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surfaceStrong,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
   },
   itemSelected: {
     borderColor: colors.accent,
@@ -86,5 +100,28 @@ const styles = StyleSheet.create({
   },
   labelSelected: {
     color: colors.accent,
+  },
+  itemCopy: {
+    flex: 1,
+    gap: 3,
+  },
+  description: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: colors.muted,
+  },
+  check: {
+    width: 24,
+    height: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceStrong,
+  },
+  checkSelected: {
+    borderColor: colors.accent,
+    backgroundColor: colors.accent,
   },
 });

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 import { ZodError } from 'zod';
 
@@ -43,6 +43,8 @@ import {
 import { DatePickerField } from '@/features/jobs/date-picker-field';
 import { getMobileJobStatusLabel } from '@/features/jobs/status-labels';
 import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
+import { AttachmentGallerySection, AttachmentPicker } from '@/features/attachments/components';
+import { uploadAttachments, type PendingAttachment } from '@/features/attachments/api';
 
 function todayDateString() {
   return new Date().toISOString().slice(0, 10);
@@ -210,52 +212,61 @@ function getFinalizationSubtitle(job: Job): string {
 
 function createProfessionalProgressRows({
   job,
+  onOpenStage,
   payment,
   quote,
 }: {
   job: Job;
+  onOpenStage: (stage: ProfessionalJobStage) => void;
   payment: JobPayment | null;
   quote: JobQuote | null;
 }): JobProgressRowItem[] {
   return [
     {
       id: 'selected',
+      onPress: () => onOpenStage('professional'),
       state: getProgressRowState('selected', job.status),
       subtitle: 'Trabajo seleccionado',
       title: 'Profesional',
     },
     {
       id: 'visit',
+      onPress: () => onOpenStage('visit'),
       state: getProgressRowState('visit', job.status),
       subtitle: getVisitSubtitle(job),
       title: 'Visita',
     },
     {
       id: 'diagnosis',
+      onPress: () => onOpenStage('diagnosis'),
       state: getProgressRowState('diagnosis', job.status),
       subtitle: getDiagnosisSubtitle(job),
       title: 'Diagnóstico',
     },
     {
       id: 'quote',
+      onPress: () => onOpenStage('quote'),
       state: getProgressRowState('quote', job.status),
       subtitle: getQuoteSubtitle(quote),
       title: 'Presupuesto',
     },
     {
       id: 'payment',
+      onPress: () => onOpenStage('payment'),
       state: getProgressRowState('payment', job.status),
       subtitle: getPaymentSubtitle(payment, job),
       title: 'Pago',
     },
     {
       id: 'execution',
+      onPress: () => onOpenStage('execution'),
       state: getProgressRowState('execution', job.status),
       subtitle: getExecutionSubtitle(job),
       title: 'Ejecución',
     },
     {
       id: 'completed',
+      onPress: () => onOpenStage('completion'),
       state: getProgressRowState('completed', job.status),
       subtitle: getFinalizationSubtitle(job),
       title: 'Finalización',
@@ -401,6 +412,8 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
       title="Gestionar trabajo"
     >
       <JobSummaryCard job={job} payment={payment} quote={latestQuote} />
+      <Card><AttachmentGallerySection jobId={job.id} title="Evidencia del diagnóstico" type="diagnosis_evidence" /></Card>
+      <Card><AttachmentGallerySection jobId={job.id} title="Evidencia de finalización" type="completion_evidence" /></Card>
       {quotesQuery.isPending ? <LoadingState message="Cargando presupuestos..." /> : null}
       {paymentQuery.isPending && job.status !== 'quote_sent' ? <LoadingState message="Cargando pago..." /> : null}
       {formError ? <Text style={styles.error}>{formError}</Text> : null}
@@ -448,14 +461,21 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
             setFormError(getSubmissionErrorMessage(error, 'No pudimos guardar la calificación.'));
           }
         }}
-        onRecordDiagnosis={async (values) => {
+        onRecordDiagnosis={async (values, attachments) => {
           setFormError(null);
 
           try {
+            const uploadResult = await uploadAttachments({ assets: attachments, jobId, type: 'diagnosis_evidence' });
+            if (uploadResult.failed.length > 0) {
+              setFormError('No pudimos subir todas las imágenes del diagnóstico. Reintentá.');
+              return uploadResult.failed;
+            }
             await diagnosisMutation.mutateAsync(values);
+            return [];
           } catch (error) {
             logDevelopmentSupabaseError('professional-job:record-diagnosis-form', error);
             setFormError(getSubmissionErrorMessage(error, 'No pudimos guardar el diagnóstico.'));
+            return attachments;
           }
         }}
         onSendQuote={async (quoteId) => {
@@ -483,14 +503,21 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
             },
           ]);
         }}
-        onSubmitCompletion={async (values) => {
+        onSubmitCompletion={async (values, attachments) => {
           setFormError(null);
 
           try {
+            const uploadResult = await uploadAttachments({ assets: attachments, jobId, type: 'completion_evidence' });
+            if (uploadResult.failed.length > 0) {
+              setFormError('No pudimos subir todas las imágenes de finalización. Reintentá.');
+              return uploadResult.failed;
+            }
             await completeJobMutation.mutateAsync(values);
+            return [];
           } catch (error) {
             logDevelopmentSupabaseError('professional-job:complete-form', error);
             setFormError(getSubmissionErrorMessage(error, 'No pudimos marcar el trabajo como terminado.'));
+            return attachments;
           }
         }}
       />
@@ -505,8 +532,25 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
   );
 }
 
+export type ProfessionalJobStage = 'professional' | 'visit' | 'diagnosis' | 'quote' | 'payment' | 'execution' | 'completion';
+
 function JobSummaryCard({ job, payment, quote }: { job: Job; payment: JobPayment | null; quote: JobQuote | null }) {
-  return <JobProgressList rows={createProfessionalProgressRows({ job, payment, quote })} />;
+  const openStage = (stage: ProfessionalJobStage) => {
+    const params: Record<string, string> = { jobId: job.id };
+    if (stage === 'professional') {
+      params.applicationId = job.selectedApplicationId;
+      params.professionalId = job.professionalId;
+    }
+    if (stage === 'quote' && quote) params.quoteId = quote.id;
+    if (stage === 'payment' && payment) params.paymentId = payment.id;
+
+    router.push({
+      pathname: `/(professional)/jobs/[jobId]/${stage}`,
+      params,
+    } as Href);
+  };
+
+  return <JobProgressList rows={createProfessionalProgressRows({ job, onOpenStage: openStage, payment, quote })} />;
 }
 
 function JobStatusActions({
@@ -530,10 +574,10 @@ function JobStatusActions({
   onCreateQuote: (values: CreateJobQuoteInput) => Promise<void>;
   onProposeVisit: (values: ProposeJobVisitInput) => Promise<void>;
   onReview: (values: CreateReviewInput) => Promise<void>;
-  onRecordDiagnosis: (values: RecordJobDiagnosisInput) => Promise<void>;
+  onRecordDiagnosis: (values: RecordJobDiagnosisInput, attachments: PendingAttachment[]) => Promise<PendingAttachment[]>;
   onSendQuote: (quoteId: string) => Promise<void>;
   onStartJob: () => Promise<void>;
-  onSubmitCompletion: (values: CompleteJobByProfessionalInput) => Promise<void>;
+  onSubmitCompletion: (values: CompleteJobByProfessionalInput, attachments: PendingAttachment[]) => Promise<PendingAttachment[]>;
   payment: JobPayment | null;
 }) {
   if (job.status === 'coordination_pending') {
@@ -662,13 +706,14 @@ function CompleteJobForm({
   onSubmit,
 }: {
   loading: boolean;
-  onSubmit: (values: CompleteJobByProfessionalInput) => Promise<void>;
+  onSubmit: (values: CompleteJobByProfessionalInput, attachments: PendingAttachment[]) => Promise<PendingAttachment[]>;
 }) {
   const [completionSummary, setCompletionSummary] = useState('');
   const [finalNotes, setFinalNotes] = useState('');
   const [finalMaterialsNotes, setFinalMaterialsNotes] = useState('');
   const [finalMaterialsAmount, setFinalMaterialsAmount] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
 
   const submit = async () => {
     const materialsAmount = finalMaterialsAmount.trim() ? Number(finalMaterialsAmount) : null;
@@ -690,7 +735,7 @@ function CompleteJobForm({
       return;
     }
 
-    await onSubmit(payload);
+    setAttachments(await onSubmit(payload, attachments));
   };
 
   return (
@@ -725,6 +770,7 @@ function CompleteJobForm({
           placeholder="Importe informativo"
           value={finalMaterialsAmount}
         />
+        <AttachmentPicker disabled={loading} onChange={setAttachments} value={attachments} />
         {validationError ? <Text style={styles.error}>{validationError}</Text> : null}
         <Button disabled={loading} onPress={() => void submit()}>
           {loading ? 'Guardando...' : 'Marcar trabajo como terminado'}
@@ -808,13 +854,14 @@ function DiagnosisForm({
   onSubmit,
 }: {
   loading: boolean;
-  onSubmit: (values: RecordJobDiagnosisInput) => Promise<void>;
+  onSubmit: (values: RecordJobDiagnosisInput, attachments: PendingAttachment[]) => Promise<PendingAttachment[]>;
 }) {
   const [diagnosisText, setDiagnosisText] = useState('');
   const [recommendedWorkText, setRecommendedWorkText] = useState('');
   const [materialsNotes, setMaterialsNotes] = useState('');
   const [diagnosisNotes, setDiagnosisNotes] = useState('');
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
 
   const submit = async () => {
     const payload = {
@@ -835,7 +882,7 @@ function DiagnosisForm({
       return;
     }
 
-    await onSubmit(payload);
+    setAttachments(await onSubmit(payload, attachments));
   };
 
   return (
@@ -870,6 +917,7 @@ function DiagnosisForm({
           placeholder="Notas adicionales del diagnóstico"
           value={diagnosisNotes}
         />
+        <AttachmentPicker disabled={loading} onChange={setAttachments} value={attachments} />
         {validationError ? <Text style={styles.error}>{validationError}</Text> : null}
         <Button disabled={loading} onPress={() => void submit()}>
           {loading ? 'Guardando...' : 'Guardar diagnóstico'}
