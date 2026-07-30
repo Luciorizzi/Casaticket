@@ -4,7 +4,6 @@ import { router, type Href, useRouter } from 'expo-router';
 import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import {
-  getApplicationProposalTypeLabel,
   getProfileDisplayName,
   getServiceRequestTypeLabel,
   getServiceRequestUrgencyLabel,
@@ -47,15 +46,18 @@ import {
   markCustomerApplicationViewed,
   selectProfessionalForRequest,
 } from '@/features/customer/service-requests-api';
+import { goToCustomerRequest, goToCustomerRequests } from '@/features/customer/request-navigation';
 import { CustomerJobSummaryPanel } from '@/features/jobs/customer-job-panel';
 import { getMobileServiceRequestStatusLabel } from '@/features/jobs/status-labels';
 import { resolveAppRoute } from '@/features/navigation/access';
 import { fetchOwnDefaultAddress, saveCustomerOnboarding } from '@/features/profile/api';
 import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
 import { queryKeys } from '@/lib/query-keys';
-import { AttachmentGallerySection, AttachmentPicker } from '@/features/attachments/components';
+import { AttachmentPicker, EditableRequestAttachmentSection } from '@/features/attachments/components';
 import { uploadAttachments, type PendingAttachment } from '@/features/attachments/api';
 import { CustomerProfileHubScreen } from '@/features/customer/customer-profile-screens';
+import { NotificationBell } from '@/features/notifications/notification-access';
+import { PublicProfessionalProfileScreen } from '@/features/professional/public-profile-screen';
 
 export function CustomerOnboardingScreen() {
   return (
@@ -81,6 +83,7 @@ export function CustomerHomeScreen() {
 
   return (
     <Screen subtitle="Desde acá vas a publicar tus solicitudes y seguir su estado." title="Inicio">
+      <View style={styles.headerAction}><NotificationBell /></View>
       <Card>
         <View style={styles.row}>
           <Avatar name={getProfileDisplayName(profile)} />
@@ -394,6 +397,8 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
   const request = requestQuery.data;
   const applications = applicationsQuery.data ?? [];
   const selectedApplication = applications.find((application) => application.status === 'selected') ?? null;
+  const requestAllowsEvidenceEditing = ['published', 'receiving_applications', 'professional_selected'].includes(request.status);
+  const canEditEvidence = requestAllowsEvidenceEditing;
   const confirmCancel = () => {
     Alert.alert(
       'Cancelar solicitud',
@@ -412,14 +417,6 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
   return (
     <Screen subtitle="Detalle de la solicitud publicada." title={request.title}>
       <ServiceRequestDetailCard applications={applications} request={request} />
-      <Card>
-        <AttachmentGallerySection serviceRequestId={request.id} title="Fotos del problema" type="request_evidence" />
-      </Card>
-      {request.status === 'published' ? (
-        <Button disabled={cancelMutation.isPending} onPress={confirmCancel} variant="danger">
-          {cancelMutation.isPending ? 'Cancelando...' : 'Cancelar solicitud'}
-        </Button>
-      ) : null}
       {cancelMutation.error ? (
         <ErrorState message="No pudimos cancelar la solicitud." title="Cancelación fallida" />
       ) : null}
@@ -454,14 +451,27 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
       {request.status === 'professional_selected' && selectedApplication ? (
         <CustomerJobSummaryPanel requestId={request.id} />
       ) : null}
+      <Card>
+        <EditableRequestAttachmentSection
+          canEdit={canEditEvidence}
+          onChanged={() => void queryClient.invalidateQueries({ queryKey: queryKeys.serviceRequest(sessionState.user.id, request.id) })}
+          serviceRequestId={request.id}
+        />
+      </Card>
+      <Button onPress={goToCustomerRequests} variant="secondary">Volver a Mis solicitudes</Button>
+      {request.status === 'published' ? (
+        <View style={styles.destructiveAction}>
+          <Button disabled={cancelMutation.isPending} onPress={confirmCancel} variant="danger">
+            {cancelMutation.isPending ? 'Cancelando...' : 'Cancelar solicitud'}
+          </Button>
+        </View>
+      ) : null}
     </Screen>
   );
 }
 
 export function CustomerRequestDetailsScreen({ requestId }: { requestId: string }) {
-  const detailRouter = useRouter();
   const { sessionState } = useAuthSession();
-  const backAction = <CustomerRequestBackButton requestId={requestId} router={detailRouter} />;
   const requestQuery = useQuery({
     queryKey:
       sessionState.status === 'authenticated'
@@ -474,7 +484,7 @@ export function CustomerRequestDetailsScreen({ requestId }: { requestId: string 
   if (requestQuery.isPending) {
     return (
       <Screen scroll={false}>
-        <ScreenHeader backAction={backAction} subtitle="Información completa de la solicitud." title="Detalles" />
+        <ScreenHeader subtitle="Información completa de la solicitud." title="Detalles" />
         <LoadingState message="Cargando solicitud..." />
       </Screen>
     );
@@ -483,7 +493,7 @@ export function CustomerRequestDetailsScreen({ requestId }: { requestId: string 
   if (sessionState.status !== 'authenticated') {
     return (
       <Screen>
-        <ScreenHeader backAction={backAction} subtitle="Información completa de la solicitud." title="Detalles" />
+        <ScreenHeader subtitle="Información completa de la solicitud." title="Detalles" />
         <ErrorState message="No encontramos una sesión activa." />
       </Screen>
     );
@@ -492,7 +502,7 @@ export function CustomerRequestDetailsScreen({ requestId }: { requestId: string 
   if (requestQuery.error || !requestQuery.data) {
     return (
       <Screen>
-        <ScreenHeader backAction={backAction} subtitle="Información completa de la solicitud." title="Detalles" />
+        <ScreenHeader subtitle="Información completa de la solicitud." title="Detalles" />
         <ErrorState message="No pudimos abrir esta solicitud." onRetry={() => void requestQuery.refetch()} />
       </Screen>
     );
@@ -502,7 +512,7 @@ export function CustomerRequestDetailsScreen({ requestId }: { requestId: string 
 
   return (
     <Screen>
-      <ScreenHeader backAction={backAction} subtitle="Información completa de la solicitud." title={request.title} />
+      <ScreenHeader subtitle="Información completa de la solicitud." title={request.title} />
       <SectionCard title="Solicitud">
         <InfoRow label="Descripción" value={request.description} />
         <InfoRow label="Categoría" value={request.category?.name ?? 'Sin categoría'} />
@@ -523,6 +533,9 @@ export function CustomerRequestDetailsScreen({ requestId }: { requestId: string 
         <InfoRow label="Publicación" value={formatDateTime(request.publishedAt)} />
         <InfoRow label="Estado" value={getMobileServiceRequestStatusLabel(request.status)} />
       </SectionCard>
+      <Button onPress={() => goToCustomerRequest(requestId)} variant="secondary">
+        Volver a la solicitud
+      </Button>
     </Screen>
   );
 }
@@ -685,101 +698,31 @@ export function CustomerApplicationDetailScreen({
     );
   }
 
-  return (
-    <Screen>
-      <ScreenHeader
-        backAction={backAction}
-        subtitle={request.title}
-        title={getProfessionalDisplayName(application)}
-      />
-      {selectMutation.error ? (
-        <ErrorState message="No pudimos seleccionar este profesional." title="Selección fallida" />
-      ) : null}
-      {openConversationMutation.error ? (
-        <ErrorState message="No pudimos abrir la conversación." title="Chat no disponible" />
-      ) : null}
-      <SectionCard title="Perfil">
-        <InfoRow label="Nombre" value={getProfessionalDisplayName(application)} />
-        <InfoRow
-          label="Rubro principal"
-          value={application.professionalCategoryNames[0] ?? 'Sin rubro principal'}
-        />
-        <InfoRow
-          label="Experiencia"
-          value={`${application.professionalYearsExperience ?? 0} años`}
-        />
-        <InfoRow
-          label="Verificación"
-          value={getVerificationLabel(application.professionalVerificationStatus)}
-        />
-        <InfoRow label="Trabajos completados" value={`${application.professionalCompletedJobsCount}`} />
-        <InfoRow
-          label="Calificación"
-          value={
-            application.professionalAverageRating === null
-              ? 'Sin calificaciones'
-              : `${application.professionalAverageRating.toFixed(1)} (${application.professionalReviewsCount})`
-          }
-        />
-        <InfoRow label="Bio" value={application.professionalBio ?? 'Este profesional todavía no cargó una bio.'} />
-      </SectionCard>
-      <SectionCard title="Propuesta">
-        <InfoRow label="Tipo" value={getApplicationProposalTypeLabel(application.proposalType)} />
-        <InfoRow label="Mensaje" value={application.message} />
-        <InfoRow label="Disponibilidad" value={application.availabilityText} />
-        <InfoRow label="Visita" value={formatPrice(application.visitPrice) ?? 'Sin precio de visita'} />
-        <InfoRow label="Estimado" value={formatPrice(application.estimatedPrice) ?? 'Sin precio estimado'} />
-        <InfoRow label="Duración" value={application.estimatedDurationText ?? 'Sin duración estimada'} />
-        <InfoRow label="Postulación" value={formatDateTime(application.createdAt)} />
-      </SectionCard>
-      <ConversationSummary
-        lastMessageAt={application.lastMessageAt}
-        lastMessageBody={application.lastMessageBody}
-        unreadCount={application.unreadCount}
-      />
-      <PrimaryActionBar
-        primaryAction={
-          canSelect ? (
-            <Button disabled={selectMutation.isPending} onPress={() => {
-              Alert.alert(
-                '¿Querés elegir a este profesional?',
-                'La selección no se podrá cambiar libremente. Las demás propuestas serán rechazadas.',
-                [
-                  { style: 'cancel', text: 'Volver' },
-                  {
-                    onPress: () => void selectMutation.mutateAsync(application),
-                    text: 'Seleccionar profesional',
-                  },
-                ],
-              );
-            }}>
-              {selectMutation.isPending ? 'Seleccionando...' : 'Seleccionar profesional'}
-            </Button>
-          ) : null
-        }
-        secondaryAction={
-          <Button
-            onPress={() => {
-              if (application.conversationId) {
-                router.push({
-                  pathname: '/chat/[conversationId]',
-                  params: { conversationId: application.conversationId },
-                } as Href);
-                return;
-              }
-
-              void openConversationMutation.mutateAsync(application.id).catch((error) => {
-                logDevelopmentSupabaseError('customer-applications:open-chat-detail', error);
-              });
-            }}
-            variant="secondary"
-          >
-            Abrir conversación
-          </Button>
-        }
-      />
-    </Screen>
-  );
+  return <PublicProfessionalProfileScreen
+    application={application}
+    canSelect={Boolean(canSelect)}
+    onBack={() => goToCustomerRequest(requestId)}
+    onOpenConversation={() => {
+      if (application.conversationId) {
+        router.push({ pathname: '/chat/[conversationId]', params: { conversationId: application.conversationId } } as Href);
+        return;
+      }
+      void openConversationMutation.mutateAsync(application.id).catch((error) => {
+        logDevelopmentSupabaseError('customer-applications:open-chat-detail', error);
+      });
+    }}
+    onSelect={() => {
+      Alert.alert(
+        '¿Querés elegir a este profesional?',
+        'La selección no se podrá cambiar libremente. Las demás propuestas serán rechazadas.',
+        [
+          { style: 'cancel', text: 'Volver' },
+          { onPress: () => void selectMutation.mutateAsync(application), text: 'Seleccionar profesional' },
+        ],
+      );
+    }}
+    professionalId={application.professionalId}
+  />;
 }
 
 export function CustomerProfileScreen() {
@@ -936,16 +879,18 @@ function ServiceRequestDetailCard({
         status={getMobileServiceRequestStatusLabel(request.status)}
         tone={request.status === 'professional_selected' ? 'success' : 'accent'}
       />
-      <ProcessTimeline
-        currentStep={timelineStep}
-        steps={[
-          { key: 'published', label: 'Solicitud' },
-          { key: 'selected', label: 'Profesional' },
-          { key: 'visit', label: 'Visita' },
-          { key: 'diagnosis', label: 'Diagnóstico' },
-          { key: 'quote', label: 'Presupuesto' },
-        ]}
-      />
+      {!selectedApplication ? (
+        <ProcessTimeline
+          currentStep={timelineStep}
+          steps={[
+            { key: 'published', label: 'Solicitud' },
+            { key: 'selected', label: 'Profesional' },
+            { key: 'visit', label: 'Visita' },
+            { key: 'diagnosis', label: 'Diagnóstico' },
+            { key: 'quote', label: 'Presupuesto' },
+          ]}
+        />
+      ) : null}
       <Button
         onPress={() =>
           router.push({
@@ -1232,19 +1177,9 @@ function formatDateTime(value: string | null): string {
   }).format(new Date(value));
 }
 
-function formatPrice(value: number | null): string | null {
-  if (value === null) {
-    return null;
-  }
-
-  return new Intl.NumberFormat('es-AR', {
-    currency: 'ARS',
-    maximumFractionDigits: 0,
-    style: 'currency',
-  }).format(value);
-}
-
 const styles = StyleSheet.create({
+  headerAction: { alignItems: 'flex-end' },
+  destructiveAction: { marginTop: 12 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

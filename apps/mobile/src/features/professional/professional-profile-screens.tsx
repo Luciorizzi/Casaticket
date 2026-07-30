@@ -129,6 +129,18 @@ export function ProfessionalProfileHubScreen() {
 
       <View style={styles.sectionList}>
         <ProfileMenuRow
+          description={profile.avatarPath ? 'Foto cargada' : 'Usando iniciales'}
+          icon="camera-outline"
+          label="Foto de perfil"
+          path="/(professional)/profile/avatar"
+        />
+        <ProfileMenuRow
+          description="Vista compartida con los clientes"
+          icon="eye-outline"
+          label="Ver cómo me ven los clientes"
+          path={`/professional/${professionalProfile.id}`}
+        />
+        <ProfileMenuRow
           description={`${profile.firstName} ${profile.lastName} · ${profile.city}`}
           icon="person-outline"
           label="Datos personales"
@@ -157,6 +169,12 @@ export function ProfessionalProfileHubScreen() {
           icon="document-text-outline"
           label="Descripción profesional"
           path="/(professional)/profile/description"
+        />
+        <ProfileMenuRow
+          description="Fotos y trabajos realizados"
+          icon="images-outline"
+          label="Portfolio"
+          path="/(professional)/profile/portfolio"
         />
       </View>
 

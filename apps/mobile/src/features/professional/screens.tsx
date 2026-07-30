@@ -67,6 +67,7 @@ import {
 import { getMobileJobStatusLabel } from '@/features/jobs/status-labels';
 import { ProfessionalProfileForm } from '@/features/professional/professional-profile-form';
 import { ProfessionalProfileHubScreen } from '@/features/professional/professional-profile-screens';
+import { NotificationBell } from '@/features/notifications/notification-access';
 import { saveProfessionalOnboarding } from '@/features/profile/api';
 import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
 import { queryKeys } from '@/lib/query-keys';
@@ -114,6 +115,7 @@ export function ProfessionalHomeScreen() {
       subtitle="Desde acá vas a gestionar tu disponibilidad y ver oportunidades compatibles."
       title="Inicio profesional"
     >
+      <View style={styles.headerAction}><NotificationBell /></View>
       <Card>
         <View style={styles.row}>
           <Avatar name={getProfileDisplayName(profile)} />
@@ -155,6 +157,9 @@ type FilterOption = {
   value: string;
 };
 
+type OpportunitiesView = 'opportunities' | 'applications';
+type ApplicationFilter = 'all' | 'pending' | 'selected' | 'rejected' | 'withdrawn';
+
 export function ProfessionalOpportunitiesScreen() {
   const queryClient = useQueryClient();
   const { sessionState } = useAuthSession();
@@ -182,6 +187,8 @@ export function ProfessionalOpportunitiesScreen() {
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [urgencyFilter, setUrgencyFilter] = useState('all');
   const [cityFilter, setCityFilter] = useState('all');
+  const [view, setView] = useState<OpportunitiesView>('opportunities');
+  const [applicationFilter, setApplicationFilter] = useState<ApplicationFilter>('all');
   const refreshInFlightRef = useRef(false);
   const opportunitiesQuery = useQuery({
     queryKey: opportunitiesQueryKey,
@@ -253,6 +260,14 @@ export function ProfessionalOpportunitiesScreen() {
       !activeApplicationsByRequest.has(opportunity.requestId)
     );
   });
+  const applications = useMemo(
+    () => dedupeApplications(applicationsQuery.data ?? []),
+    [applicationsQuery.data],
+  );
+  const filteredApplications = applications.filter(
+    (application) =>
+      applicationFilter === 'all' || getApplicationFilter(application) === applicationFilter,
+  );
   const isRefreshing =
     opportunitiesQuery.isRefetching || applicationsQuery.isRefetching || categoryQuery.isRefetching;
 
@@ -320,16 +335,24 @@ export function ProfessionalOpportunitiesScreen() {
 
   return (
     <Screen scroll={false}>
-      <FlatList
+      <FlatList<ProfessionalOpportunity | ProfessionalApplication>
         contentContainerStyle={styles.opportunitiesListContent}
-        data={filteredOpportunities}
+        data={view === 'opportunities' ? filteredOpportunities : filteredApplications}
         ItemSeparatorComponent={() => <View style={styles.opportunitySeparator} />}
         keyboardShouldPersistTaps="handled"
-        keyExtractor={(opportunity) => opportunity.requestId}
+        keyExtractor={(item) =>
+          view === 'opportunities'
+            ? (item as ProfessionalOpportunity).requestId
+            : (item as ProfessionalApplication).id
+        }
         ListEmptyComponent={
           <EmptyState
-            description="Probá cambiar los filtros o actualizar la lista."
-            title="No hay oportunidades disponibles."
+            description={view === 'opportunities'
+              ? 'Probá cambiar los filtros o actualizar la lista.'
+              : 'Actualizá la lista para consultar cambios recientes.'}
+            title={view === 'opportunities'
+              ? 'No hay oportunidades disponibles.'
+              : getApplicationEmptyMessage(applicationFilter)}
           />
         }
         ListHeaderComponent={
@@ -350,39 +373,50 @@ export function ProfessionalOpportunitiesScreen() {
                 onRefresh={refreshOpportunities}
               />
             </View>
-            <OpportunityFilters
-              activeFilterCount={activeFilterCount}
-              categoryFilter={categoryFilter}
-              categoryFilters={categoryFilters}
-              cityFilter={cityFilter}
-              cityFilters={cityFilters}
-              onCategoryChange={setCategoryFilter}
-              onCityChange={setCityFilter}
-              onClearCategory={() => setCategoryFilter('all')}
-              onClearCity={() => setCityFilter('all')}
-              onClearFilters={() => {
-                setCategoryFilter('all');
-                setCityFilter('all');
-                setUrgencyFilter('all');
-              }}
-              onClearUrgency={() => setUrgencyFilter('all')}
-              onUrgencyChange={setUrgencyFilter}
-              urgencyFilter={urgencyFilter}
-              urgencyFilters={urgencyFilters}
-            />
-            <OpportunityListHeader count={filteredOpportunities.length} />
+            <OpportunitiesViewTabs onChange={setView} value={view} />
+            {view === 'opportunities' ? (
+              <>
+                <OpportunityFilters
+                  activeFilterCount={activeFilterCount}
+                  categoryFilter={categoryFilter}
+                  categoryFilters={categoryFilters}
+                  cityFilter={cityFilter}
+                  cityFilters={cityFilters}
+                  onCategoryChange={setCategoryFilter}
+                  onCityChange={setCityFilter}
+                  onClearCategory={() => setCategoryFilter('all')}
+                  onClearCity={() => setCityFilter('all')}
+                  onClearFilters={() => {
+                    setCategoryFilter('all');
+                    setCityFilter('all');
+                    setUrgencyFilter('all');
+                  }}
+                  onClearUrgency={() => setUrgencyFilter('all')}
+                  onUrgencyChange={setUrgencyFilter}
+                  urgencyFilter={urgencyFilter}
+                  urgencyFilters={urgencyFilters}
+                />
+                <OpportunityListHeader count={filteredOpportunities.length} />
+              </>
+            ) : (
+              <ApplicationFilters onChange={setApplicationFilter} value={applicationFilter} />
+            )}
           </View>
         }
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={refreshOpportunities} tintColor="#bb5e3c" />
         }
-        renderItem={({ item: opportunity }) => (
-          <OpportunityListItem
-            application={activeApplicationsByRequest.get(opportunity.requestId) ?? null}
-            categoryName={getOpportunityCategoryName(opportunity, categoriesById)}
-            opportunity={opportunity}
-          />
-        )}
+        renderItem={({ item }) =>
+          view === 'opportunities' ? (
+            <OpportunityListItem
+              application={activeApplicationsByRequest.get((item as ProfessionalOpportunity).requestId) ?? null}
+              categoryName={getOpportunityCategoryName(item as ProfessionalOpportunity, categoriesById)}
+              opportunity={item as ProfessionalOpportunity}
+            />
+          ) : (
+            <ProfessionalApplicationListItem application={item as ProfessionalApplication} />
+          )
+        }
         showsVerticalScrollIndicator={false}
       />
     </Screen>
@@ -1047,6 +1081,124 @@ function OpportunityListHeader({ count }: { count: number }) {
   );
 }
 
+const APPLICATION_FILTERS: { label: string; value: ApplicationFilter }[] = [
+  { label: 'Todas', value: 'all' },
+  { label: 'Pendientes', value: 'pending' },
+  { label: 'Seleccionadas', value: 'selected' },
+  { label: 'No seleccionadas', value: 'rejected' },
+  { label: 'Retiradas', value: 'withdrawn' },
+];
+
+function OpportunitiesViewTabs({
+  onChange,
+  value,
+}: {
+  onChange: (value: OpportunitiesView) => void;
+  value: OpportunitiesView;
+}) {
+  return (
+    <View accessibilityRole="tablist" style={styles.internalTabs}>
+      {([
+        ['opportunities', 'Oportunidades'],
+        ['applications', 'Mis postulaciones'],
+      ] as const).map(([tabValue, label]) => (
+        <Pressable
+          accessibilityRole="tab"
+          accessibilityState={{ selected: value === tabValue }}
+          key={tabValue}
+          onPress={() => onChange(tabValue)}
+          style={[styles.internalTab, value === tabValue ? styles.internalTabActive : null]}
+        >
+          <Text style={[styles.internalTabLabel, value === tabValue ? styles.internalTabLabelActive : null]}>
+            {label}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function ApplicationFilters({
+  onChange,
+  value,
+}: {
+  onChange: (value: ApplicationFilter) => void;
+  value: ApplicationFilter;
+}) {
+  return (
+    <ScrollView
+      contentContainerStyle={styles.applicationFilters}
+      horizontal
+      showsHorizontalScrollIndicator={false}
+    >
+      {APPLICATION_FILTERS.map((filter) => (
+        <Pressable
+          accessibilityLabel={`Mostrar ${filter.label.toLowerCase()}`}
+          accessibilityRole="button"
+          accessibilityState={{ selected: value === filter.value }}
+          key={filter.value}
+          onPress={() => onChange(filter.value)}
+          style={[styles.applicationFilter, value === filter.value ? styles.applicationFilterActive : null]}
+        >
+          <Text style={[styles.applicationFilterLabel, value === filter.value ? styles.applicationFilterLabelActive : null]}>
+            {filter.label}
+          </Text>
+        </Pressable>
+      ))}
+    </ScrollView>
+  );
+}
+
+function ProfessionalApplicationListItem({ application }: { application: ProfessionalApplication }) {
+  const status = getProfessionalApplicationPresentation(application);
+  const openApplication = () => {
+    if (status.filter === 'selected') {
+      if (application.jobId) {
+        router.push(`/(professional)/jobs/${application.jobId}` as Href);
+        return;
+      }
+
+      router.push('/(professional)/jobs');
+      return;
+    }
+
+    router.push(`/(professional)/opportunities/${application.requestId}` as Href);
+  };
+
+  return (
+    <Pressable
+      accessibilityLabel={`Abrir postulación: ${application.requestTitle ?? 'Solicitud'}`}
+      accessibilityRole="button"
+      onPress={openApplication}
+      testID="professional-application-card"
+    >
+      <View style={styles.opportunityCard}>
+        <View style={styles.opportunityRow}>
+          <View style={styles.opportunityCopy}>
+            <Text numberOfLines={1} style={styles.opportunityCategory}>
+              Postulación
+            </Text>
+            <Text numberOfLines={1} style={styles.requestTitle} testID="application-card-title">
+              {application.requestTitle ?? 'Solicitud de servicio'}
+            </Text>
+            <Text numberOfLines={1} style={styles.requestMeta}>
+              {[application.categoryName, application.city].filter(Boolean).join(' · ')}
+            </Text>
+            <StatusBadge tone={status.tone} value={status.label} />
+            <Text numberOfLines={2} style={styles.requestDescriptionCompact}>
+              {application.message}
+            </Text>
+            <Text style={styles.requestMeta}>
+              Postulado {formatRelativePublishedAt(application.createdAt)}
+            </Text>
+          </View>
+          <Text style={styles.chevron}>›</Text>
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
 function RefreshIconButton({
   disabled,
   loading,
@@ -1326,6 +1478,72 @@ function updateProfessionalSelectedJobChatCache({
   );
 }
 
+function getApplicationFilter(application: ProfessionalApplication): Exclude<ApplicationFilter, 'all'> {
+  if (application.status === 'withdrawn') {
+    return 'withdrawn';
+  }
+
+  if (application.status === 'selected') {
+    return 'selected';
+  }
+
+  if (application.status === 'rejected' || application.requestStatus === 'cancelled') {
+    return 'rejected';
+  }
+
+  return 'pending';
+}
+
+function getProfessionalApplicationPresentation(application: ProfessionalApplication): {
+  filter: Exclude<ApplicationFilter, 'all'>;
+  label: string;
+  tone: 'accent' | 'neutral' | 'success' | 'warning';
+} {
+  const filter = getApplicationFilter(application);
+
+  switch (filter) {
+    case 'pending':
+      return { filter, label: 'Pendiente de aceptación', tone: 'warning' };
+    case 'selected':
+      return { filter, label: 'Seleccionada', tone: 'success' };
+    case 'rejected':
+      return { filter, label: 'No seleccionada', tone: 'neutral' };
+    case 'withdrawn':
+      return { filter, label: 'Retirada', tone: 'neutral' };
+  }
+}
+
+function getApplicationEmptyMessage(filter: ApplicationFilter): string {
+  switch (filter) {
+    case 'pending':
+      return 'No tenés postulaciones pendientes.';
+    case 'selected':
+      return 'Todavía no fuiste seleccionado en ninguna solicitud.';
+    case 'rejected':
+      return 'No hay postulaciones cerradas sin selección.';
+    case 'withdrawn':
+      return 'No retiraste ninguna postulación.';
+    case 'all':
+      return 'Todavía no tenés postulaciones.';
+  }
+}
+
+function dedupeApplications(applications: ProfessionalApplication[]): ProfessionalApplication[] {
+  const byApplicationId = new Map<string, ProfessionalApplication>();
+
+  applications.forEach((application) => {
+    const current = byApplicationId.get(application.id);
+
+    if (!current || compareNullableDates(application.updatedAt, current.updatedAt) > 0) {
+      byApplicationId.set(application.id, application);
+    }
+  });
+
+  return Array.from(byApplicationId.values()).sort((left, right) =>
+    compareNullableDates(right.createdAt, left.createdAt),
+  );
+}
+
 
 function dedupeOpportunities(opportunities: ProfessionalOpportunity[]): ProfessionalOpportunity[] {
   const byRequestId = new Map<string, ProfessionalOpportunity>();
@@ -1537,6 +1755,7 @@ function getProfessionalJobNextAction(status: ProfessionalSelectedJob['jobStatus
 }
 
 const styles = StyleSheet.create({
+  headerAction: { alignItems: 'flex-end' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1644,6 +1863,56 @@ const styles = StyleSheet.create({
     color: '#8c765d',
     fontSize: 12,
     lineHeight: 17,
+  },
+  internalTabs: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#dccbb1',
+  },
+  internalTab: {
+    minHeight: 44,
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  internalTabActive: {
+    borderBottomColor: '#bb5e3c',
+  },
+  internalTabLabel: {
+    color: '#675a49',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  internalTabLabelActive: {
+    color: '#bb5e3c',
+  },
+  applicationFilters: {
+    gap: 8,
+    paddingRight: 8,
+  },
+  applicationFilter: {
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#dccbb1',
+    backgroundColor: '#ffffff',
+    paddingHorizontal: 14,
+  },
+  applicationFilterActive: {
+    borderColor: '#bb5e3c',
+    backgroundColor: '#f2ddd1',
+  },
+  applicationFilterLabel: {
+    color: '#675a49',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  applicationFilterLabelActive: {
+    color: '#9b472b',
   },
   filterBar: {
     flexDirection: 'row',

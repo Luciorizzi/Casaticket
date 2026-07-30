@@ -3,13 +3,14 @@ import type { ImagePickerAsset } from 'expo-image-picker';
 import { logDevelopmentSupabaseError } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
 
-export type AttachmentType = 'request_evidence' | 'diagnosis_evidence' | 'completion_evidence';
+export type AttachmentType = 'request_evidence' | 'diagnosis_evidence' | 'completion_evidence' | 'portfolio';
 
 export interface Attachment {
   id: string;
   ownerId: string;
   serviceRequestId: string | null;
   jobId: string | null;
+  portfolioItemId?: string | null;
   attachmentType: AttachmentType;
   mimeType: string;
   fileSizeBytes: number | null;
@@ -23,6 +24,7 @@ interface AttachmentRow {
   owner_id: string;
   service_request_id: string | null;
   job_id: string | null;
+  portfolio_item_id?: string | null;
   attachment_type: AttachmentType;
   storage_path: string;
   mime_type: string;
@@ -62,6 +64,7 @@ function mapAttachment(row: AttachmentRow, signedUrl: string): Attachment {
     ownerId: row.owner_id,
     serviceRequestId: row.service_request_id,
     jobId: row.job_id,
+    portfolioItemId: row.portfolio_item_id ?? null,
     attachmentType: row.attachment_type,
     mimeType: row.mime_type,
     fileSizeBytes: row.file_size_bytes,
@@ -71,15 +74,25 @@ function mapAttachment(row: AttachmentRow, signedUrl: string): Attachment {
   };
 }
 
-export async function listAttachments(parent: { jobId?: string; serviceRequestId?: string }, type: AttachmentType): Promise<Attachment[]> {
+export async function listAttachments(parent: { jobId?: string; portfolioItemId?: string; serviceRequestId?: string }, type: AttachmentType): Promise<Attachment[]> {
   let query = supabase.from('attachments').select('*').eq('attachment_type', type).order('sort_order');
-  query = parent.jobId ? query.eq('job_id', parent.jobId) : query.eq('service_request_id', parent.serviceRequestId ?? '');
+  query = parent.jobId
+    ? query.eq('job_id', parent.jobId)
+    : parent.portfolioItemId
+      ? query.eq('portfolio_item_id', parent.portfolioItemId)
+      : query.eq('service_request_id', parent.serviceRequestId ?? '');
   const { data, error } = await query;
   if (error) {
     logDevelopmentSupabaseError('attachments:list', error);
     throw error;
   }
   return Promise.all((data as AttachmentRow[]).map(async (row) => mapAttachment(row, await getSignedUrl(row.storage_path))));
+}
+
+export async function canEditRequestEvidence(serviceRequestId: string): Promise<boolean> {
+  const { data, error } = await supabase.rpc('can_edit_request_evidence', { p_service_request_id: serviceRequestId });
+  if (error) throw error;
+  return data === true;
 }
 
 export async function getRequestAttachmentCounts(requestIds: string[]): Promise<Map<string, number>> {
@@ -97,9 +110,10 @@ export async function getRequestAttachmentCounts(requestIds: string[]): Promise<
   return counts;
 }
 
-export async function uploadAttachment({ asset, jobId, serviceRequestId, sortOrder, type }: {
+export async function uploadAttachment({ asset, jobId, portfolioItemId, serviceRequestId, sortOrder, type }: {
   asset: PendingAttachment;
   jobId?: string;
+  portfolioItemId?: string;
   serviceRequestId?: string;
   sortOrder: number;
   type: AttachmentType;
@@ -108,15 +122,24 @@ export async function uploadAttachment({ asset, jobId, serviceRequestId, sortOrd
   const response = await fetch(asset.uri);
   const body = await response.arrayBuffer();
   const size = body.byteLength;
-  const { data: registeredData, error: registerError } = await supabase.rpc('register_attachment', {
-    p_attachment_type: type,
-    p_file_extension: extensionForMime(mimeType),
-    p_file_size_bytes: size,
-    p_job_id: jobId ?? null,
-    p_mime_type: mimeType,
-    p_service_request_id: serviceRequestId ?? null,
-    p_sort_order: sortOrder,
-  });
+  const registration = portfolioItemId
+    ? await supabase.rpc('register_portfolio_attachment', {
+        p_file_extension: extensionForMime(mimeType),
+        p_file_size_bytes: size,
+        p_mime_type: mimeType,
+        p_portfolio_item_id: portfolioItemId,
+        p_sort_order: sortOrder,
+      })
+    : await supabase.rpc('register_attachment', {
+        p_attachment_type: type,
+        p_file_extension: extensionForMime(mimeType),
+        p_file_size_bytes: size,
+        p_job_id: jobId ?? null,
+        p_mime_type: mimeType,
+        p_service_request_id: serviceRequestId ?? null,
+        p_sort_order: sortOrder,
+      });
+  const { data: registeredData, error: registerError } = registration;
   if (registerError) throw registerError;
   const row = (registeredData as AttachmentRow[])[0];
   if (!row) throw new Error('No pudimos registrar el adjunto.');
@@ -135,14 +158,16 @@ export async function uploadAttachment({ asset, jobId, serviceRequestId, sortOrd
 export async function uploadAttachments(input: {
   assets: PendingAttachment[];
   jobId?: string;
+  portfolioItemId?: string;
   serviceRequestId?: string;
+  sortOrderOffset?: number;
   type: AttachmentType;
 }): Promise<{ failed: PendingAttachment[]; uploaded: Attachment[] }> {
   const uploaded: Attachment[] = [];
   const failed: PendingAttachment[] = [];
   for (const [sortOrder, asset] of input.assets.entries()) {
     try {
-      uploaded.push(await uploadAttachment({ ...input, asset, sortOrder }));
+      uploaded.push(await uploadAttachment({ ...input, asset, sortOrder: sortOrder + (input.sortOrderOffset ?? 0) }));
     } catch (error) {
       failed.push({ ...asset, error: error instanceof Error ? error.message : 'No se pudo subir.' });
     }

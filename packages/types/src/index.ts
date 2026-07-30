@@ -188,6 +188,12 @@ export interface ProfessionalApplication {
   createdAt: string;
   updatedAt: string;
   withdrawnAt: string | null;
+  requestTitle?: string | null;
+  categoryName?: string | null;
+  city?: string | null;
+  requestStatus?: ServiceRequestStatus | null;
+  selectedProfessionalId?: string | null;
+  jobId?: string | null;
 }
 
 export interface CustomerRequestApplication {

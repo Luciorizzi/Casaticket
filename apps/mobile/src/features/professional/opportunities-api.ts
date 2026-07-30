@@ -43,6 +43,12 @@ interface ApplicationRow {
   created_at: string;
   updated_at: string;
   withdrawn_at: string | null;
+  request_title?: string | null;
+  category_name?: string | null;
+  city?: string | null;
+  request_status?: ProfessionalApplication['requestStatus'];
+  selected_professional_id?: string | null;
+  job_id?: string | null;
 }
 
 interface SelectedJobRpcRow {
@@ -120,6 +126,12 @@ function mapApplication(row: ApplicationRow): ProfessionalApplication {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     withdrawnAt: row.withdrawn_at,
+    requestTitle: row.request_title ?? null,
+    categoryName: row.category_name ?? null,
+    city: row.city ?? null,
+    requestStatus: row.request_status ?? null,
+    selectedProfessionalId: row.selected_professional_id ?? null,
+    jobId: row.job_id ?? null,
   };
 }
 

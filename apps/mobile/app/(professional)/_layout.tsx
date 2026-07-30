@@ -20,7 +20,6 @@ export default function ProfessionalLayout() {
         options={{ tabBarIcon: createTabIcon('hammer-outline', 'hammer'), title: 'Mis trabajos' }}
       />
       <Tabs.Screen name="jobs/[jobId]" options={{ href: null, title: 'Trabajo' }} />
-      <Tabs.Screen name="jobs/[jobId]/professional" options={{ href: null, title: 'Profesional' }} />
       <Tabs.Screen name="jobs/[jobId]/visit" options={{ href: null, title: 'Visita' }} />
       <Tabs.Screen name="jobs/[jobId]/diagnosis" options={{ href: null, title: 'Diagnóstico' }} />
       <Tabs.Screen name="jobs/[jobId]/quote" options={{ href: null, title: 'Presupuesto' }} />
@@ -36,6 +35,8 @@ export default function ProfessionalLayout() {
       <Tabs.Screen name="profile/work-area" options={{ href: null, title: 'Zona de trabajo' }} />
       <Tabs.Screen name="profile/availability" options={{ href: null, title: 'Disponibilidad' }} />
       <Tabs.Screen name="profile/description" options={{ href: null, title: 'Descripción profesional' }} />
+      <Tabs.Screen name="profile/avatar" options={{ href: null, title: 'Foto de perfil' }} />
+      <Tabs.Screen name="profile/portfolio" options={{ href: null, title: 'Portfolio' }} />
     </Tabs>
   );
 }

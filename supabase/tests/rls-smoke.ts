@@ -412,6 +412,40 @@ async function main() {
     throw new Error(`Customer could not register request evidence: ${registeredRequestAttachment.error?.message ?? 'missing row'}`);
   }
 
+  const foreignRequestAttachment = await bootstrapProfessionalClient.rpc('register_attachment', {
+    p_service_request_id: ownServiceRequestInsert.data.id,
+    p_job_id: null,
+    p_attachment_type: 'request_evidence',
+    p_mime_type: 'image/jpeg',
+    p_file_size_bytes: 4,
+    p_sort_order: 1,
+    p_file_extension: 'jpg',
+  });
+  if (!foreignRequestAttachment.error) throw new Error('Foreign user unexpectedly registered request evidence.');
+
+  for (const sortOrder of [1, 2, 3, 4]) {
+    const additionalAttachment = await customerClient.rpc('register_attachment', {
+      p_service_request_id: ownServiceRequestInsert.data.id,
+      p_job_id: null,
+      p_attachment_type: 'request_evidence',
+      p_mime_type: 'image/jpeg',
+      p_file_size_bytes: 4,
+      p_sort_order: sortOrder,
+      p_file_extension: 'jpg',
+    });
+    if (additionalAttachment.error) throw new Error(`Customer could not register request evidence ${sortOrder + 1}: ${additionalAttachment.error.message}`);
+  }
+  const overLimitAttachment = await customerClient.rpc('register_attachment', {
+    p_service_request_id: ownServiceRequestInsert.data.id,
+    p_job_id: null,
+    p_attachment_type: 'request_evidence',
+    p_mime_type: 'image/jpeg',
+    p_file_size_bytes: 4,
+    p_sort_order: 4,
+    p_file_extension: 'jpg',
+  });
+  if (!overLimitAttachment.error) throw new Error('Customer unexpectedly exceeded the five-photo request limit.');
+
   const requestAttachmentUpload = await customerClient.storage
     .from('service-attachments')
     .upload(requestAttachment.storage_path, new Uint8Array([1, 2, 3, 4]), { contentType: 'image/jpeg' });
@@ -506,6 +540,20 @@ async function main() {
   if (ownApplicationInsert.error || ownApplicationInsert.data.status !== 'submitted') {
     throw new Error(
       `Professional could not create own application: ${ownApplicationInsert.error?.message ?? 'unknown error'}`,
+    );
+  }
+
+  const ownApplicationTrackingRead = await professionalClient.rpc('list_professional_applications');
+
+  if (
+    ownApplicationTrackingRead.error ||
+    !((ownApplicationTrackingRead.data ?? []) as { id: string; request_title: string }[]).some(
+      (application) =>
+        application.id === ownApplicationInsert.data.id && application.request_title === 'Arreglo de perdida',
+    )
+  ) {
+    throw new Error(
+      `Professional could not track own application: ${ownApplicationTrackingRead.error?.message ?? 'not found'}`,
     );
   }
 
@@ -662,6 +710,80 @@ async function main() {
   if ((foreignApplicationRead.data ?? []).length !== 0) {
     throw new Error('Professional unexpectedly read another professional application.');
   }
+
+  const foreignApplicationTrackingRead = await bootstrapProfessionalClient.rpc(
+    'list_professional_applications',
+  );
+
+  if (
+    foreignApplicationTrackingRead.error ||
+    ((foreignApplicationTrackingRead.data ?? []) as { id: string }[]).some(
+      (application) => application.id === ownApplicationInsert.data.id,
+    )
+  ) {
+    throw new Error('Professional unexpectedly tracked another professional application.');
+  }
+
+  const portfolioItemInsert = await professionalClient
+    .from('professional_portfolio_items')
+    .insert({
+      professional_id: professionalProfile.id,
+      category_id: serviceRequestCategoryId,
+      title: 'Trabajo de plomeria terminado',
+      description: 'Reparacion completa con terminaciones y prueba final.',
+      sort_order: 0,
+      is_visible: true,
+    })
+    .select('id')
+    .single();
+  if (portfolioItemInsert.error) throw new Error(`Professional could not create portfolio item: ${portfolioItemInsert.error.message}`);
+
+  const publicPortfolioRead = await bootstrapProfessionalClient
+    .from('professional_portfolio_items')
+    .select('id')
+    .eq('id', portfolioItemInsert.data.id);
+  if (publicPortfolioRead.error || publicPortfolioRead.data.length !== 1) throw new Error('Authenticated user could not read visible professional portfolio.');
+
+  const portfolioAttachment = await professionalClient.rpc('register_portfolio_attachment', {
+    p_portfolio_item_id: portfolioItemInsert.data.id,
+    p_mime_type: 'image/jpeg',
+    p_file_size_bytes: 4,
+    p_sort_order: 0,
+    p_file_extension: 'jpg',
+  });
+  if (portfolioAttachment.error || !portfolioAttachment.data?.[0]?.id) throw new Error(`Professional could not register portfolio image: ${portfolioAttachment.error?.message ?? 'missing row'}`);
+  const foreignPortfolioAttachmentInsert = await bootstrapProfessionalClient.rpc('register_portfolio_attachment', {
+    p_portfolio_item_id: portfolioItemInsert.data.id,
+    p_mime_type: 'image/jpeg',
+    p_file_size_bytes: 4,
+    p_sort_order: 1,
+    p_file_extension: 'jpg',
+  });
+  if (!foreignPortfolioAttachmentInsert.error) throw new Error('Foreign professional unexpectedly registered portfolio image.');
+
+  const foreignPortfolioUpdate = await bootstrapProfessionalClient
+    .from('professional_portfolio_items')
+    .update({ title: 'Cambio ajeno' })
+    .eq('id', portfolioItemInsert.data.id)
+    .select('id');
+  if (foreignPortfolioUpdate.error || foreignPortfolioUpdate.data.length !== 0) throw new Error('Foreign professional unexpectedly edited portfolio.');
+
+  const hidePortfolioItem = await professionalClient
+    .from('professional_portfolio_items')
+    .update({ is_visible: false })
+    .eq('id', portfolioItemInsert.data.id);
+  if (hidePortfolioItem.error) throw new Error(`Professional could not hide portfolio item: ${hidePortfolioItem.error.message}`);
+  const hiddenPortfolioRead = await bootstrapProfessionalClient
+    .from('professional_portfolio_items')
+    .select('id')
+    .eq('id', portfolioItemInsert.data.id);
+  if (hiddenPortfolioRead.error || hiddenPortfolioRead.data.length !== 0) throw new Error('Hidden portfolio item was visible to another user.');
+  const hiddenPortfolioAttachmentRead = await bootstrapProfessionalClient.from('attachments').select('id').eq('id', portfolioAttachment.data[0].id);
+  if (hiddenPortfolioAttachmentRead.error || hiddenPortfolioAttachmentRead.data.length !== 0) throw new Error('Hidden portfolio image was visible to another user.');
+
+  const publicProfileRead = await customerClient.rpc('get_public_professional_profile', { p_professional_id: professionalProfile.id });
+  if (publicProfileRead.error || publicProfileRead.data?.[0]?.professional_id !== professionalProfile.id) throw new Error('Customer could not read active public professional profile.');
+  if ('phone' in (publicProfileRead.data?.[0] ?? {}) || 'email' in (publicProfileRead.data?.[0] ?? {})) throw new Error('Public professional profile exposed contact data.');
 
   const selectionServiceRequestInsert = await customerClient
     .from('service_requests')
@@ -2011,10 +2133,58 @@ async function main() {
     throw new Error('Professional unexpectedly applied to a cancelled service request.');
   }
 
+  const customerNotifications = await customerClient
+    .from('notifications')
+    .select('id, type, read_at, dedupe_key')
+    .order('created_at');
+  if (customerNotifications.error || customerNotifications.data.length === 0) {
+    throw new Error(`Customer notifications were not generated: ${customerNotifications.error?.message ?? 'empty result'}`);
+  }
+  const customerNotificationTypes = new Set(customerNotifications.data.map((notification) => notification.type));
+  for (const expectedType of ['application_received', 'message_received', 'quote_received', 'request_cancelled']) {
+    if (!customerNotificationTypes.has(expectedType)) throw new Error(`Customer notification missing: ${expectedType}`);
+  }
+  const professionalNotifications = await professionalClient.from('notifications').select('type');
+  if (professionalNotifications.error) throw new Error(`Professional could not read own notifications: ${professionalNotifications.error.message}`);
+  const professionalNotificationTypes = new Set(professionalNotifications.data.map((notification) => notification.type));
+  for (const expectedType of ['application_selected', 'message_received', 'quote_accepted', 'payment_secured', 'job_confirmed']) {
+    if (!professionalNotificationTypes.has(expectedType)) throw new Error(`Professional notification missing: ${expectedType}`);
+  }
+  const applicationNotificationCount = customerNotifications.data.filter((notification) => notification.dedupe_key === `application:${ownApplicationInsert.data.id}:created`).length;
+  if (applicationNotificationCount !== 1) throw new Error('Notification dedupe did not preserve a single application event.');
+
+  const customerNotification = customerNotifications.data.find((notification) => notification.read_at === null);
+  if (!customerNotification) throw new Error('Missing unread customer notification for read test.');
+  const foreignNotificationRead = await professionalClient.from('notifications').select('id').eq('id', customerNotification.id);
+  if (foreignNotificationRead.error || foreignNotificationRead.data.length !== 0) throw new Error('Professional unexpectedly read customer notification.');
+  const foreignMarkRead = await professionalClient.rpc('mark_notification_read', { p_notification_id: customerNotification.id });
+  if (foreignMarkRead.error) throw new Error(`Foreign mark-read RPC should be harmless: ${foreignMarkRead.error.message}`);
+  const stillUnread = await customerClient.from('notifications').select('read_at').eq('id', customerNotification.id).single();
+  if (stillUnread.error || stillUnread.data.read_at !== null) throw new Error('Foreign user unexpectedly marked customer notification read.');
+  const ownMarkRead = await customerClient.rpc('mark_notification_read', { p_notification_id: customerNotification.id });
+  if (ownMarkRead.error) throw new Error(`Customer could not mark own notification read: ${ownMarkRead.error.message}`);
+  const markAllRead = await customerClient.rpc('mark_all_notifications_read');
+  if (markAllRead.error) throw new Error(`Customer could not mark all notifications read: ${markAllRead.error.message}`);
+
+  const pushToken = 'ExponentPushToken[rlssmokecustomer]';
+  const registerToken = await customerClient.rpc('register_push_token', { p_device_id: 'rls-smoke', p_expo_push_token: pushToken, p_platform: 'android' });
+  if (registerToken.error || registerToken.data.user_id !== customerId) throw new Error(`Push token was not associated with customer: ${registerToken.error?.message ?? 'wrong owner'}`);
+  const foreignTokenRead = await professionalClient.from('push_tokens').select('id').eq('expo_push_token', pushToken);
+  if (foreignTokenRead.error || foreignTokenRead.data.length !== 0) throw new Error('Professional unexpectedly read customer push token.');
+
   const requestAttachmentRemove = await customerClient.storage.from('service-attachments').remove([requestAttachment.storage_path]);
-  if (requestAttachmentRemove.error) throw new Error(`Customer could not remove own evidence object: ${requestAttachmentRemove.error.message}`);
+  if (requestAttachmentRemove.error) throw new Error(`Immutable evidence delete check failed: ${requestAttachmentRemove.error.message}`);
+  const requestAttachmentPath = requestAttachment.storage_path.split('/');
+  const requestAttachmentName = requestAttachmentPath.pop();
+  const immutableObjectList = await adminClient.storage.from('service-attachments').list(requestAttachmentPath.join('/'));
+  if (immutableObjectList.error || !immutableObjectList.data.some((object) => object.name === requestAttachmentName)) {
+    throw new Error('Customer unexpectedly removed immutable request evidence object.');
+  }
   const requestAttachmentDelete = await customerClient.rpc('delete_own_attachment', { p_attachment_id: requestAttachment.id });
-  if (requestAttachmentDelete.error) throw new Error(`Customer could not delete own evidence row: ${requestAttachmentDelete.error.message}`);
+  if (!requestAttachmentDelete.error) throw new Error('Customer unexpectedly deleted immutable request evidence row.');
+
+  const portfolioCleanup = await professionalClient.from('professional_portfolio_items').delete().eq('id', portfolioItemInsert.data.id);
+  if (portfolioCleanup.error) throw new Error(`Could not clean up portfolio smoke item: ${portfolioCleanup.error.message}`);
 
   await cleanupSmokeServiceRequests(adminClient);
 

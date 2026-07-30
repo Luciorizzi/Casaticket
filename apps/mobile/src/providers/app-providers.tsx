@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { AuthProvider } from '@/features/auth/auth-provider';
+import { NotificationProvider } from '@/features/notifications/notification-provider';
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -20,7 +21,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
   return (
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
-        <AuthProvider>{children}</AuthProvider>
+        <AuthProvider><NotificationProvider>{children}</NotificationProvider></AuthProvider>
       </QueryClientProvider>
     </SafeAreaProvider>
   );

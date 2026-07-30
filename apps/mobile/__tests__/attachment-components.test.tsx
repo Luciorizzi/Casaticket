@@ -1,14 +1,30 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import * as ImagePicker from 'expo-image-picker';
 
+const mockDeleteAttachment = jest.fn();
+const mockListAttachments = jest.fn();
+const mockUploadAttachments = jest.fn();
+
+jest.mock('@/features/attachments/api', () => ({
+  canEditRequestEvidence: jest.fn().mockResolvedValue(true),
+  deleteAttachment: (...args: unknown[]) => mockDeleteAttachment(...args),
+  listAttachments: (...args: unknown[]) => mockListAttachments(...args),
+  uploadAttachments: (...args: unknown[]) => mockUploadAttachments(...args),
+}));
+
 import type { PendingAttachment } from '@/features/attachments/api';
-import { AttachmentGallery, AttachmentPicker } from '@/features/attachments/components';
+import { AttachmentGallery, AttachmentPicker, getRequestAttachmentActionLabel } from '@/features/attachments/components';
 
 function asset(index: number): PendingAttachment {
   return { height: 600, localId: `local-${index}`, mimeType: 'image/jpeg', uri: `file://image-${index}.jpg`, width: 800 };
 }
 
 describe('attachment components', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockListAttachments.mockResolvedValue([]);
+    mockUploadAttachments.mockResolvedValue({ failed: [], uploaded: [] });
+  });
   it('enforces the five-image limit', () => {
     jest.mocked(ImagePicker.launchCameraAsync).mockClear();
     jest.mocked(ImagePicker.launchImageLibraryAsync).mockClear();
@@ -40,5 +56,11 @@ describe('attachment components', () => {
     }]} />);
     fireEvent.press(screen.getByLabelText('Ampliar imagen 1'));
     expect(screen.getByText('Cerrar imagen')).toBeTruthy();
+  });
+
+  it('describes request photo capacity from zero through the limit', () => {
+    expect(getRequestAttachmentActionLabel(0)).toBe('Agregar fotos · hasta 5');
+    expect(getRequestAttachmentActionLabel(2)).toBe('Agregar más fotos · quedan 3');
+    expect(getRequestAttachmentActionLabel(5)).toBe('Límite alcanzado');
   });
 });

@@ -42,8 +42,9 @@ import {
 } from '@/features/jobs/api';
 import { DatePickerField } from '@/features/jobs/date-picker-field';
 import { getMobileJobStatusLabel } from '@/features/jobs/status-labels';
+import { goBackToProfessionalJobs } from '@/features/jobs/professional-job-navigation';
 import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
-import { AttachmentGallerySection, AttachmentPicker } from '@/features/attachments/components';
+import { AttachmentPicker } from '@/features/attachments/components';
 import { uploadAttachments, type PendingAttachment } from '@/features/attachments/api';
 
 function todayDateString() {
@@ -122,8 +123,18 @@ function formatDateShort(value: string | null): string {
 }
 
 function getProgressRowState(step: ProgressStep, status: Job['status']): JobProgressRowState {
-  if (status === 'disputed' && step === 'completed') {
-    return 'warning';
+  if (step === 'completed') {
+    if (status === 'completed') {
+      return 'done';
+    }
+
+    if (status === 'disputed') {
+      return 'danger';
+    }
+
+    if (status === 'review_pending' || status === 'completion_pending') {
+      return 'warning';
+    }
   }
 
   const currentIndex = progressStepOrder.indexOf(getTimelineStep(status) as ProgressStep);
@@ -200,13 +211,13 @@ function getFinalizationSubtitle(job: Job): string {
   switch (job.status) {
     case 'review_pending':
     case 'completion_pending':
-      return 'Pendiente de confirmación';
+      return 'En revisión';
     case 'completed':
-      return 'Trabajo confirmado';
+      return 'Trabajo finalizado';
     case 'disputed':
-      return 'Problema reportado';
+      return 'En disputa';
     default:
-      return 'Pendiente';
+      return 'Pendiente de confirmación';
   }
 }
 
@@ -222,13 +233,6 @@ function createProfessionalProgressRows({
   quote: JobQuote | null;
 }): JobProgressRowItem[] {
   return [
-    {
-      id: 'selected',
-      onPress: () => onOpenStage('professional'),
-      state: getProgressRowState('selected', job.status),
-      subtitle: 'Trabajo seleccionado',
-      title: 'Profesional',
-    },
     {
       id: 'visit',
       onPress: () => onOpenStage('visit'),
@@ -404,7 +408,7 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
   return (
     <Screen
       footer={
-        <Button onPress={() => router.back()} variant="secondary">
+        <Button onPress={goBackToProfessionalJobs} variant="secondary">
           Volver a Mis trabajos
         </Button>
       }
@@ -412,8 +416,6 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
       title="Gestionar trabajo"
     >
       <JobSummaryCard job={job} payment={payment} quote={latestQuote} />
-      <Card><AttachmentGallerySection jobId={job.id} title="Evidencia del diagnóstico" type="diagnosis_evidence" /></Card>
-      <Card><AttachmentGallerySection jobId={job.id} title="Evidencia de finalización" type="completion_evidence" /></Card>
       {quotesQuery.isPending ? <LoadingState message="Cargando presupuestos..." /> : null}
       {paymentQuery.isPending && job.status !== 'quote_sent' ? <LoadingState message="Cargando pago..." /> : null}
       {formError ? <Text style={styles.error}>{formError}</Text> : null}
@@ -532,15 +534,11 @@ export function ProfessionalJobDetailScreen({ jobId }: { jobId: string }) {
   );
 }
 
-export type ProfessionalJobStage = 'professional' | 'visit' | 'diagnosis' | 'quote' | 'payment' | 'execution' | 'completion';
+export type ProfessionalJobStage = 'visit' | 'diagnosis' | 'quote' | 'payment' | 'execution' | 'completion';
 
 function JobSummaryCard({ job, payment, quote }: { job: Job; payment: JobPayment | null; quote: JobQuote | null }) {
   const openStage = (stage: ProfessionalJobStage) => {
     const params: Record<string, string> = { jobId: job.id };
-    if (stage === 'professional') {
-      params.applicationId = job.selectedApplicationId;
-      params.professionalId = job.professionalId;
-    }
     if (stage === 'quote' && quote) params.quoteId = quote.id;
     if (stage === 'payment' && payment) params.paymentId = payment.id;
 

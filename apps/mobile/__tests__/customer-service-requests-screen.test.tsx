@@ -24,6 +24,10 @@ const mockMarkCustomerApplicationViewed = jest.fn();
 const mockSelectProfessionalForRequest = jest.fn();
 const mockListActiveCategories = jest.fn();
 const mockEnsureApplicationConversation = jest.fn();
+const mockCanEditRequestEvidence = jest.fn();
+const mockListAttachments = jest.fn();
+const mockUploadAttachments = jest.fn();
+const mockDeleteAttachment = jest.fn();
 
 jest.mock('expo-router', () => ({
   router: {
@@ -68,6 +72,13 @@ jest.mock('@/features/auth/auth-provider', () => ({
 
 jest.mock('@/features/applications/chat-api', () => ({
   ensureApplicationConversation: (...args: unknown[]) => mockEnsureApplicationConversation(...args),
+}));
+
+jest.mock('@/features/attachments/api', () => ({
+  canEditRequestEvidence: (...args: unknown[]) => mockCanEditRequestEvidence(...args),
+  deleteAttachment: (...args: unknown[]) => mockDeleteAttachment(...args),
+  listAttachments: (...args: unknown[]) => mockListAttachments(...args),
+  uploadAttachments: (...args: unknown[]) => mockUploadAttachments(...args),
 }));
 
 jest.mock('@/features/applications/job-panel', () => ({
@@ -137,6 +148,26 @@ jest.mock('@/features/profile/api', () => ({
   fetchOwnDefaultAddress: jest.fn(),
   saveCustomerOnboarding: jest.fn(),
 }));
+
+jest.mock('@/features/professional/public-profile-screen', () => {
+  const React = jest.requireActual('react');
+  const { Text, View } = jest.requireActual('react-native');
+  return {
+    PublicProfessionalProfileScreen: ({ application, onBack, onOpenConversation, onSelect }: { application: CustomerRequestApplication; onBack: () => void; onOpenConversation: () => void; onSelect: () => void }) => React.createElement(
+      View,
+      null,
+      React.createElement(Text, { onPress: onBack }, 'Volver'),
+      React.createElement(Text, null, 'Ciudad base'),
+      React.createElement(Text, null, 'Rubros'),
+      React.createElement(Text, null, 'Radio de trabajo'),
+      React.createElement(Text, null, 'Disponibilidad'),
+      React.createElement(Text, null, 'Visita y estimación'),
+      React.createElement(Text, null, application.professionalFirstName),
+      React.createElement(Text, { onPress: onOpenConversation }, 'Abrir conversación'),
+      React.createElement(Text, { onPress: onSelect }, 'Seleccionar profesional'),
+    ),
+  };
+});
 
 import {
   CustomerApplicationDetailScreen,
@@ -252,6 +283,9 @@ describe('customer service request screens', () => {
     mockListActiveCategories.mockResolvedValue([category]);
     mockCanGoBack.mockReturnValue(true);
     mockListCustomerRequestApplications.mockResolvedValue([]);
+    mockCanEditRequestEvidence.mockResolvedValue(true);
+    mockListAttachments.mockResolvedValue([]);
+    mockUploadAttachments.mockResolvedValue({ failed: [], uploaded: [] });
     mockMarkCustomerApplicationViewed.mockResolvedValue({
       application_id: 'application-1',
       status: 'viewed',
@@ -446,39 +480,61 @@ describe('customer service request screens', () => {
     });
   });
 
-  it('returns from request details using navigation history', async () => {
+  it('returns from the main request detail to Mis solicitudes explicitly', async () => {
     mockGetOwnServiceRequest.mockResolvedValue(createRequest());
-    renderWithQueryClient(<CustomerRequestDetailsScreen requestId="request-1" />);
+    renderWithQueryClient(<CustomerRequestDetailScreen requestId="request-1" />);
 
-    await waitFor(() => {
-      expect(screen.getByText('Volver')).toBeTruthy();
-    });
+    await waitFor(() => expect(screen.getByText('Volver a Mis solicitudes')).toBeTruthy());
+    fireEvent.press(screen.getByText('Volver a Mis solicitudes'));
 
-    fireEvent.press(screen.getByText('Volver'));
-
-    expect(mockBack).toHaveBeenCalledTimes(1);
-    expect(mockReplace).not.toHaveBeenCalledWith({
-      pathname: '/(customer)/requests/[id]',
-      params: { id: 'request-1' },
-    });
+    expect(mockReplace).toHaveBeenCalledWith('/(customer)/requests');
+    expect(mockBack).not.toHaveBeenCalled();
   });
 
-  it('falls back to the same request when details has no history', async () => {
-    mockCanGoBack.mockReturnValue(false);
+  it('offers adding photos for an editable request and keeps cancel last', async () => {
+    mockGetOwnServiceRequest.mockResolvedValue(createRequest());
+    renderWithQueryClient(<CustomerRequestDetailScreen requestId="request-1" />);
+
+    await waitFor(() => expect(screen.getByText('Agregar fotos · hasta 5')).toBeTruthy());
+    expect(screen.getByText('Volver a Mis solicitudes')).toBeTruthy();
+    expect(screen.getByText('Cancelar solicitud')).toBeTruthy();
+  });
+
+  it('does not allow adding photos to a cancelled request', async () => {
+    mockGetOwnServiceRequest.mockResolvedValue(createRequest({ status: 'cancelled' }));
+    renderWithQueryClient(<CustomerRequestDetailScreen requestId="request-1" />);
+
+    await waitFor(() => expect(screen.getByText('Fotos del problema')).toBeTruthy());
+    expect(screen.queryByText(/Agregar (más )?fotos/)).toBeNull();
+  });
+
+  it('returns from request details explicitly to the same request', async () => {
     mockGetOwnServiceRequest.mockResolvedValue(createRequest());
     renderWithQueryClient(<CustomerRequestDetailsScreen requestId="request-1" />);
 
     await waitFor(() => {
-      expect(screen.getByText('Volver')).toBeTruthy();
+      expect(screen.getByText('Volver a la solicitud')).toBeTruthy();
     });
 
-    fireEvent.press(screen.getByText('Volver'));
+    fireEvent.press(screen.getByText('Volver a la solicitud'));
 
     expect(mockBack).not.toHaveBeenCalled();
     expect(mockReplace).toHaveBeenCalledWith({
       pathname: '/(customer)/requests/[id]',
       params: { id: 'request-1' },
     });
+  });
+
+  it('does not duplicate the horizontal process when a professional is selected', async () => {
+    mockGetOwnServiceRequest.mockResolvedValue(createRequest({ status: 'professional_selected' }));
+    mockListCustomerRequestApplications.mockResolvedValue([
+      createCustomerApplication({ status: 'selected' }),
+    ]);
+    renderWithQueryClient(<CustomerRequestDetailScreen requestId="request-1" />);
+
+    await waitFor(() => expect(screen.getAllByText('Profesional seleccionado').length).toBeGreaterThan(0));
+    expect(screen.queryByText('Visita')).toBeNull();
+    expect(screen.queryByText('Diagnóstico')).toBeNull();
   });
 
   it('returns from profile and proposal using navigation history', async () => {
@@ -499,6 +555,23 @@ describe('customer service request screens', () => {
       pathname: '/(customer)/requests/[id]',
       params: { id: 'request-1' },
     });
+  });
+
+  it('shows a legible professional profile without internal identifiers', async () => {
+    mockGetOwnServiceRequest.mockResolvedValue(createRequest());
+    mockListCustomerRequestApplications.mockResolvedValue([createCustomerApplication()]);
+    renderWithQueryClient(
+      <CustomerApplicationDetailScreen applicationId="application-1" requestId="request-1" />,
+    );
+
+    await waitFor(() => expect(screen.getByText('Ciudad base')).toBeTruthy());
+    expect(screen.getByText('Rubros')).toBeTruthy();
+    expect(screen.getByText('Radio de trabajo')).toBeTruthy();
+    expect(screen.getAllByText('Disponibilidad').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText('Visita y estimación')).toBeTruthy();
+    expect(screen.queryByText('application-1')).toBeNull();
+    expect(screen.queryByText('professional-1')).toBeNull();
+    expect(screen.queryByText('2026-07-20T12:00:00.000Z')).toBeNull();
   });
 
   it('falls back to the request from profile and proposal without history', async () => {

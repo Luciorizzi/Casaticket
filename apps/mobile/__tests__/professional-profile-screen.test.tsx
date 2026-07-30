@@ -139,9 +139,15 @@ describe('professional profile screens', () => {
     expect(screen.getByText('Zona de trabajo')).toBeTruthy();
     expect(screen.getByText('Disponibilidad')).toBeTruthy();
     expect(screen.getByText('Descripción profesional')).toBeTruthy();
+    expect(screen.getByText('Foto de perfil')).toBeTruthy();
+    expect(screen.getByText('Portfolio')).toBeTruthy();
+    expect(screen.getByText('Ver cómo me ven los clientes')).toBeTruthy();
 
     fireEvent.press(screen.getByText('Rubros y especialidades'));
     expect(mockPush).toHaveBeenCalledWith('/(professional)/profile/categories');
+
+    fireEvent.press(screen.getByText('Ver cómo me ven los clientes'));
+    expect(mockPush).toHaveBeenCalledWith('/professional/professional-1');
   });
 
   it('searches, selects and saves professional categories', async () => {

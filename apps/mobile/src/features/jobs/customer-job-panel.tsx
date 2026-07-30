@@ -550,6 +550,9 @@ export function CustomerJobPanel({ requestId }: { requestId: string }) {
 
   return (
     <View style={styles.stack}>
+      <Button onPress={() => router.push({ pathname: '/professional/[professionalId]', params: { jobId: job.id, professionalId: job.professionalId } })} variant="secondary">
+        Ver perfil profesional
+      </Button>
       <JobProgressList rows={createCustomerProgressRows({ job, payment, quote: latestQuote })} />
       {quotesQuery.isPending ? <LoadingState message="Cargando presupuestos..." /> : null}
       {paymentQuery.isPending && job.status !== 'quote_sent' ? <LoadingState message="Cargando pago..." /> : null}

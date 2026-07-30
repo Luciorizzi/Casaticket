@@ -46,6 +46,7 @@ jest.mock('@/lib/supabase', () => ({
 import {
   createApplication,
   getOwnApplication,
+  listOwnApplications,
   listProfessionalSelectedJobs,
   listProfessionalOpportunities,
   withdrawApplication,
@@ -180,6 +181,30 @@ describe('professional opportunities api', () => {
 
     expect(mockRpc).toHaveBeenCalledWith('get_professional_application', {
       p_request_id: 'request-1',
+    });
+  });
+
+  it('lists own applications with request summary and selected job id', async () => {
+    mockRpc.mockResolvedValueOnce({
+      data: [createApplicationRow({
+        request_title: 'Rotura de tecla de luz',
+        category_name: 'Electricidad',
+        city: 'CABA',
+        request_status: 'professional_selected',
+        selected_professional_id: 'professional-1',
+        job_id: 'job-1',
+      })],
+      error: null,
+    });
+
+    const applications = await listOwnApplications('professional-1');
+
+    expect(mockRpc).toHaveBeenCalledWith('list_professional_applications');
+    expect(applications[0]).toMatchObject({
+      requestTitle: 'Rotura de tecla de luz',
+      categoryName: 'Electricidad',
+      city: 'CABA',
+      jobId: 'job-1',
     });
   });
 

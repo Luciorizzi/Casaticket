@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { colors } from '@/components/ui/theme';
 
-export type JobProgressRowState = 'active' | 'done' | 'pending' | 'warning';
+export type JobProgressRowState = 'active' | 'danger' | 'done' | 'pending' | 'warning';
 
 export interface JobProgressRowItem {
   id: string;
@@ -21,6 +21,7 @@ export function JobProgressList({ rows }: { rows: JobProgressRowItem[] }) {
           accessibilityRole="button"
           key={row.id}
           onPress={row.onPress}
+          testID={`job-progress-${row.id}-${row.state}`}
           style={({ pressed }) => [
             styles.row,
             index < rows.length - 1 ? styles.rowBorder : null,
@@ -49,6 +50,9 @@ const indicatorStyles = StyleSheet.create({
   },
   done: {
     backgroundColor: colors.success,
+  },
+  danger: {
+    backgroundColor: colors.danger,
   },
   pending: {
     backgroundColor: colors.border,

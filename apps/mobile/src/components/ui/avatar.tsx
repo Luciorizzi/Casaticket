@@ -1,13 +1,14 @@
-import { StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 
 import { colors } from '@/components/ui/theme';
 
 interface AvatarProps {
   name: string;
   size?: number;
+  uri?: string | null;
 }
 
-export function Avatar({ name, size = 56 }: AvatarProps) {
+export function Avatar({ name, size = 56, uri = null }: AvatarProps) {
   const initials = name
     .split(' ')
     .map((part) => part.trim().slice(0, 1))
@@ -18,7 +19,7 @@ export function Avatar({ name, size = 56 }: AvatarProps) {
 
   return (
     <View style={[styles.avatar, { width: size, height: size, borderRadius: size / 2 }]}>
-      <Text style={styles.initials}>{initials || 'CT'}</Text>
+      {uri ? <Image accessibilityLabel={`Foto de ${name}`} source={{ uri }} style={styles.image} /> : <Text style={styles.initials}>{initials || 'CT'}</Text>}
     </View>
   );
 }
@@ -36,4 +37,5 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.accent,
   },
+  image: { height: '100%', width: '100%' },
 });

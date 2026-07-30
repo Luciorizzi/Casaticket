@@ -1,16 +1,22 @@
 import { useState } from 'react';
-import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import * as ImageManipulator from 'expo-image-manipulator';
 import * as ImagePicker from 'expo-image-picker';
 import { Ionicons } from '@expo/vector-icons';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { Button } from '@/components/ui/button';
 import { colors } from '@/components/ui/theme';
-import { listAttachments, type Attachment, type AttachmentType, type PendingAttachment } from '@/features/attachments/api';
+import { canEditRequestEvidence, deleteAttachment, listAttachments, uploadAttachments, type Attachment, type AttachmentType, type PendingAttachment } from '@/features/attachments/api';
 
 const MAX_ATTACHMENTS = 5;
 const VALID_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+
+export function getRequestAttachmentActionLabel(count: number): string {
+  if (count <= 0) return 'Agregar fotos · hasta 5';
+  if (count >= MAX_ATTACHMENTS) return 'Límite alcanzado';
+  return `Agregar más fotos · quedan ${MAX_ATTACHMENTS - count}`;
+}
 
 export function AttachmentThumbnail({ label, onPress, uri }: { label: string; onPress: () => void; uri: string }) {
   return (
@@ -20,28 +26,29 @@ export function AttachmentThumbnail({ label, onPress, uri }: { label: string; on
   );
 }
 
-export function AttachmentViewer({ onClose, uri, visible }: { onClose: () => void; uri: string | null; visible: boolean }) {
+export function AttachmentViewer({ onClose, onDelete, uri, visible }: { onClose: () => void; onDelete?: () => void; uri: string | null; visible: boolean }) {
   return (
     <Modal animationType="fade" onRequestClose={onClose} transparent visible={visible}>
       <View style={styles.viewerBackdrop}>
         {uri ? <Image resizeMode="contain" source={{ uri }} style={styles.viewerImage} /> : null}
+        {onDelete ? <Button onPress={onDelete} variant="danger">Eliminar foto</Button> : null}
         <Button onPress={onClose} variant="secondary">Cerrar imagen</Button>
       </View>
     </Modal>
   );
 }
 
-export function AttachmentGallery({ attachments, emptyLabel = 'No hay fotos adjuntas.' }: { attachments: Attachment[]; emptyLabel?: string }) {
-  const [selectedUri, setSelectedUri] = useState<string | null>(null);
+export function AttachmentGallery({ attachments, emptyLabel = 'No hay fotos adjuntas.', onDelete }: { attachments: Attachment[]; emptyLabel?: string; onDelete?: (attachment: Attachment) => void }) {
+  const [selected, setSelected] = useState<Attachment | null>(null);
   if (attachments.length === 0) return <Text style={styles.empty}>{emptyLabel}</Text>;
   return (
     <>
       <ScrollView contentContainerStyle={styles.gallery} horizontal showsHorizontalScrollIndicator={false}>
         {attachments.map((attachment, index) => (
-          <AttachmentThumbnail key={attachment.id} label={`Ampliar imagen ${index + 1}`} onPress={() => setSelectedUri(attachment.signedUrl)} uri={attachment.signedUrl} />
+          <AttachmentThumbnail key={attachment.id} label={`Ampliar imagen ${index + 1}`} onPress={() => setSelected(attachment)} uri={attachment.signedUrl} />
         ))}
       </ScrollView>
-      <AttachmentViewer onClose={() => setSelectedUri(null)} uri={selectedUri} visible={selectedUri !== null} />
+      <AttachmentViewer {...(selected && onDelete ? { onDelete: () => { onDelete(selected); setSelected(null); } } : {})} onClose={() => setSelected(null)} uri={selected?.signedUrl ?? null} visible={selected !== null} />
     </>
   );
 }
@@ -68,8 +75,10 @@ export function AttachmentGallerySection({ jobId, serviceRequestId, title, type 
   );
 }
 
-export function AttachmentPicker({ disabled = false, onChange, value }: {
+export function AttachmentPicker({ disabled = false, existingCount = 0, maxAttachments = MAX_ATTACHMENTS, onChange, value }: {
   disabled?: boolean;
+  existingCount?: number;
+  maxAttachments?: number;
   onChange: (attachments: PendingAttachment[]) => void;
   value: PendingAttachment[];
 }) {
@@ -77,7 +86,7 @@ export function AttachmentPicker({ disabled = false, onChange, value }: {
 
   const addAssets = async (source: 'camera' | 'library') => {
     setError(null);
-    const remaining = MAX_ATTACHMENTS - value.length;
+    const remaining = maxAttachments - existingCount - value.length;
     if (remaining <= 0) return;
     const permission = source === 'camera' ? await ImagePicker.requestCameraPermissionsAsync() : await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) {
@@ -99,7 +108,7 @@ export function AttachmentPicker({ disabled = false, onChange, value }: {
 
   return (
     <View style={styles.picker}>
-      <View style={styles.pickerHeader}><Text style={styles.title}>Fotos del problema</Text><Text style={styles.count}>{value.length} de {MAX_ATTACHMENTS}</Text></View>
+      <View style={styles.pickerHeader}><Text style={styles.title}>Fotos para agregar</Text><Text style={styles.count}>{existingCount + value.length} de {maxAttachments}</Text></View>
       <Text style={styles.help}>Opcional. Podés agregar hasta cinco imágenes.</Text>
       <ScrollView contentContainerStyle={styles.gallery} horizontal showsHorizontalScrollIndicator={false}>
         {value.map((asset, index) => (
@@ -114,11 +123,54 @@ export function AttachmentPicker({ disabled = false, onChange, value }: {
       </ScrollView>
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <View style={styles.actions}>
-        <Button disabled={disabled || value.length >= MAX_ATTACHMENTS} onPress={() => void addAssets('camera')} variant="secondary">Cámara</Button>
-        <Button disabled={disabled || value.length >= MAX_ATTACHMENTS} onPress={() => void addAssets('library')} variant="secondary">Galería</Button>
+        <Button disabled={disabled || existingCount + value.length >= maxAttachments} onPress={() => void addAssets('camera')} variant="secondary">Cámara</Button>
+        <Button disabled={disabled || existingCount + value.length >= maxAttachments} onPress={() => void addAssets('library')} variant="secondary">Galería</Button>
       </View>
     </View>
   );
+}
+
+export function EditableRequestAttachmentSection({ canEdit, onChanged, serviceRequestId }: {
+  canEdit: boolean;
+  onChanged?: () => void;
+  serviceRequestId: string;
+}) {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [pending, setPending] = useState<PendingAttachment[]>([]);
+  const queryKey = ['attachments', 'request_evidence', serviceRequestId] as const;
+  const query = useQuery({ queryFn: () => listAttachments({ serviceRequestId }, 'request_evidence'), queryKey, staleTime: 12 * 60 * 1000 });
+  const editPermissionQuery = useQuery({ enabled: canEdit, queryFn: () => canEditRequestEvidence(serviceRequestId), queryKey: ['request-evidence-editable', serviceRequestId] });
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey });
+    onChanged?.();
+  };
+  const uploadMutation = useMutation({
+    mutationFn: () => uploadAttachments({ assets: pending, serviceRequestId, sortOrderOffset: query.data?.length ?? 0, type: 'request_evidence' }),
+    onSuccess: async (result) => {
+      setPending(result.failed);
+      if (result.uploaded.length > 0) await refresh();
+      if (result.failed.length === 0) setEditing(false);
+    },
+  });
+  const deleteMutation = useMutation({ mutationFn: deleteAttachment, onSuccess: refresh });
+  const attachments = query.data ?? [];
+  const editingAllowed = canEdit && editPermissionQuery.data === true;
+  const remaining = MAX_ATTACHMENTS - attachments.length;
+  const confirmDelete = (attachment: Attachment) => Alert.alert('Eliminar foto', 'La foto dejará de estar disponible para los profesionales.', [
+    { style: 'cancel', text: 'Cancelar' },
+    { onPress: () => deleteMutation.mutate(attachment.id), style: 'destructive', text: 'Eliminar' },
+  ]);
+
+  return <View style={styles.section}>
+    <Text style={styles.title}>Fotos del problema</Text>
+    {query.isPending ? <Text style={styles.help}>Cargando imágenes...</Text> : null}
+    {query.error ? <Text style={styles.error}>No pudimos cargar las imágenes.</Text> : null}
+    {query.data ? <AttachmentGallery {...(editingAllowed ? { onDelete: confirmDelete } : {})} attachments={attachments} /> : null}
+    {editingAllowed && remaining > 0 && !editing ? <Button onPress={() => setEditing(true)} variant="secondary">{getRequestAttachmentActionLabel(attachments.length)}</Button> : null}
+    {editingAllowed && remaining === 0 ? <Text style={styles.help}>Límite alcanzado</Text> : null}
+    {editing ? <><AttachmentPicker disabled={uploadMutation.isPending} existingCount={attachments.length} onChange={setPending} value={pending} /><View style={styles.actions}><Button onPress={() => { setEditing(false); setPending([]); }} variant="ghost">Cancelar</Button><Button disabled={pending.length === 0 || uploadMutation.isPending} onPress={() => uploadMutation.mutate()} variant="secondary">{uploadMutation.isPending ? 'Subiendo...' : 'Confirmar carga'}</Button></View></> : null}
+  </View>;
 }
 
 const styles = StyleSheet.create({

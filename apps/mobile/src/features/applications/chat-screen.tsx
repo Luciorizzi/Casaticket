@@ -225,6 +225,17 @@ export function ApplicationChatScreen({ conversationId }: ApplicationChatScreenP
           ) : (
             <Text style={styles.requestMeta}>Todavía no hay mensajes.</Text>
           )}
+          {sessionState.profile?.role === 'customer' ? (
+            <Button
+              onPress={() => router.push({
+                pathname: '/(customer)/requests/[id]/applications/[applicationId]',
+                params: { applicationId: conversation.applicationId, id: conversation.requestId },
+              })}
+              variant="ghost"
+            >
+              Ver perfil profesional
+            </Button>
+          ) : null}
         </View>
 
         {messagesQuery.error ? (

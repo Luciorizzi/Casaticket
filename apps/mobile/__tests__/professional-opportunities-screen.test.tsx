@@ -397,6 +397,58 @@ describe('professional opportunities screens', () => {
     expect(screen.queryByText('Ya me postulé')).toBeNull();
   });
 
+  it('shows own applications in Mis postulaciones without duplicates', async () => {
+    const application = createApplication({
+      requestTitle: 'Rotura de tecla de luz',
+      categoryName: 'Electricidad',
+      city: 'CABA',
+    });
+    mockListOwnApplications.mockResolvedValue([application, application]);
+
+    renderWithQueryClient(<ProfessionalOpportunitiesScreen />);
+    await waitFor(() => expect(screen.getByText('Mis postulaciones')).toBeTruthy());
+    fireEvent.press(screen.getByText('Mis postulaciones'));
+
+    expect(screen.getAllByText('Rotura de tecla de luz')).toHaveLength(1);
+    expect(screen.getByText('Pendiente de aceptación')).toBeTruthy();
+    expect(screen.getByText('Electricidad · CABA')).toBeTruthy();
+  });
+
+  it('filters application states with readable labels', async () => {
+    mockListOwnApplications.mockResolvedValue([
+      createApplication({ id: 'pending', requestTitle: 'Pendiente', status: 'viewed' }),
+      createApplication({ id: 'selected', requestTitle: 'Elegida', status: 'selected', jobId: 'job-7' }),
+      createApplication({ id: 'rejected', requestTitle: 'No elegida', status: 'rejected' }),
+      createApplication({ id: 'withdrawn', requestTitle: 'Retirada propia', status: 'withdrawn' }),
+    ]);
+
+    renderWithQueryClient(<ProfessionalOpportunitiesScreen />);
+    await waitFor(() => expect(screen.getByText('Mis postulaciones')).toBeTruthy());
+    fireEvent.press(screen.getByText('Mis postulaciones'));
+    fireEvent.press(screen.getByLabelText('Mostrar seleccionadas'));
+
+    expect(screen.getByText('Elegida')).toBeTruthy();
+    expect(screen.queryByText('Pendiente')).toBeNull();
+    expect(screen.queryByText('No elegida')).toBeNull();
+    expect(screen.queryByText('Retirada propia')).toBeNull();
+  });
+
+  it('opens selected applications by jobId and other applications by requestId', async () => {
+    mockListOwnApplications.mockResolvedValue([
+      createApplication({ id: 'selected', requestTitle: 'Elegida', status: 'selected', jobId: 'job-7' }),
+      createApplication({ id: 'pending', requestId: 'request-9', requestTitle: 'Pendiente' }),
+    ]);
+
+    renderWithQueryClient(<ProfessionalOpportunitiesScreen />);
+    await waitFor(() => expect(screen.getByText('Mis postulaciones')).toBeTruthy());
+    fireEvent.press(screen.getByText('Mis postulaciones'));
+    fireEvent.press(screen.getByLabelText('Abrir postulación: Elegida'));
+    fireEvent.press(screen.getByLabelText('Abrir postulación: Pendiente'));
+
+    expect(mockPush).toHaveBeenCalledWith('/(professional)/jobs/job-7');
+    expect(mockPush).toHaveBeenCalledWith('/(professional)/opportunities/request-9');
+  });
+
   it('shows Electricidad opportunities to professionals with that category', async () => {
     mockListProfessionalOpportunities.mockResolvedValue([
       createOpportunity({

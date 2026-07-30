@@ -257,9 +257,10 @@ describe('professional job detail screen', () => {
     mockGetJobPayment.mockResolvedValueOnce(createPayment({ status: 'released' }));
     renderWithQueryClient(<ProfessionalJobDetailScreen jobId="job-1" />);
 
-    await waitFor(() => expect(screen.getByLabelText(/Profesional:/)).toBeTruthy());
+    await waitFor(() => expect(screen.getByLabelText(/Visita:/)).toBeTruthy());
+    expect(screen.queryByLabelText(/Profesional:/)).toBeNull();
     const stages = [
-      ['Profesional', 'professional'], ['Visita', 'visit'], ['Diagnóstico', 'diagnosis'],
+      ['Visita', 'visit'], ['Diagnóstico', 'diagnosis'],
       ['Presupuesto', 'quote'], ['Pago', 'payment'], ['Ejecución', 'execution'], ['Finalización', 'completion'],
     ] as const;
     for (const [label, stage] of stages) {
@@ -269,24 +270,86 @@ describe('professional job detail screen', () => {
         pathname: `/(professional)/jobs/[jobId]/${stage}`,
       }));
     }
-    expect(mockPush).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ applicationId: 'application-1', professionalId: 'professional-1' }) }));
     expect(mockPush).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ quoteId: 'quote-1' }) }));
     expect(mockPush).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ paymentId: 'payment-1' }) }));
   });
 
-  it('stage back uses navigation history when available', async () => {
-    renderWithQueryClient(<ProfessionalJobStageScreen jobId="job-1" stage="visit" />);
-    await waitFor(() => expect(screen.getByLabelText('Volver a gestionar trabajo')).toBeTruthy());
-    fireEvent.press(screen.getByLabelText('Volver a gestionar trabajo'));
-    expect(mockBack).toHaveBeenCalled();
+  it('shows completed finalization as green and leaves previous stages completed', async () => {
+    mockGetProfessionalJobById.mockResolvedValueOnce(createJob({
+      completionMode: 'customer_confirmed',
+      status: 'completed',
+    }));
+    renderWithQueryClient(<ProfessionalJobDetailScreen jobId="job-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText('Finalización: Trabajo finalizado')).toBeTruthy());
+    expect(screen.getByTestId('job-progress-completed-done')).toBeTruthy();
+    expect(screen.getByTestId('job-progress-visit-done')).toBeTruthy();
+    expect(screen.getByTestId('job-progress-execution-done')).toBeTruthy();
   });
 
-  it('stage back falls back to the current job detail without history', async () => {
-    mockCanGoBack.mockReturnValue(false);
+  it('shows finalization in review as warning', async () => {
+    mockGetProfessionalJobById.mockResolvedValueOnce(createJob({ status: 'review_pending' }));
+    renderWithQueryClient(<ProfessionalJobDetailScreen jobId="job-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText('Finalización: En revisión')).toBeTruthy());
+    expect(screen.getByTestId('job-progress-completed-warning')).toBeTruthy();
+  });
+
+  it('shows disputed finalization as an alert instead of completed', async () => {
+    mockGetProfessionalJobById.mockResolvedValueOnce(createJob({ status: 'disputed' }));
+    renderWithQueryClient(<ProfessionalJobDetailScreen jobId="job-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText('Finalización: En disputa')).toBeTruthy());
+    expect(screen.getByTestId('job-progress-completed-danger')).toBeTruthy();
+    expect(screen.queryByTestId('job-progress-completed-done')).toBeNull();
+  });
+
+  it('stage back deterministically returns to the current job detail', async () => {
     renderWithQueryClient(<ProfessionalJobStageScreen jobId="job-1" stage="visit" />);
     await waitFor(() => expect(screen.getByLabelText('Volver a gestionar trabajo')).toBeTruthy());
     fireEvent.press(screen.getByLabelText('Volver a gestionar trabajo'));
-    expect(mockReplace).toHaveBeenCalledWith('/(professional)/jobs/job-1');
+    expect(mockReplace).toHaveBeenCalledWith({
+      pathname: '/(professional)/jobs/[jobId]',
+      params: { jobId: 'job-1' },
+    });
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it('manage job back deterministically returns to Mis trabajos', async () => {
+    renderWithQueryClient(<ProfessionalJobDetailScreen jobId="job-1" />);
+
+    await waitFor(() => expect(screen.getByText('Volver a Mis trabajos')).toBeTruthy());
+    fireEvent.press(screen.getByText('Volver a Mis trabajos'));
+
+    expect(mockReplace).toHaveBeenCalledWith('/(professional)/jobs');
+    expect(mockBack).not.toHaveBeenCalled();
+  });
+
+  it('does not duplicate stage evidence galleries in manage job', async () => {
+    renderWithQueryClient(<ProfessionalJobDetailScreen jobId="job-1" />);
+
+    await waitFor(() => expect(screen.getByLabelText(/Visita:/)).toBeTruthy());
+    expect(screen.queryByText('Evidencia del diagnóstico')).toBeNull();
+    expect(screen.queryByText('Evidencia de finalización')).toBeNull();
+  });
+
+  it('renders execution details with formatted dates, amounts and useful copy', async () => {
+    mockGetProfessionalJobById.mockResolvedValueOnce(createJob({
+      completionSummary: 'Se reemplazó la cañería dañada.',
+      finalMaterialsAmount: 2500,
+      finalMaterialsNotes: 'Caño y sellador.',
+      finalNotes: 'Controlar nuevamente en 30 días.',
+      startedAt: '2026-07-21T11:00:00.000Z',
+      status: 'review_pending',
+    }));
+
+    renderWithQueryClient(<ProfessionalJobStageScreen jobId="job-1" stage="execution" />);
+
+    await waitFor(() => expect(screen.getByText('Trabajo realizado')).toBeTruthy());
+    expect(screen.getByText(/21 de julio de 2026.*8:00/)).toBeTruthy();
+    expect(screen.getByText(/\$\s*2\.500/)).toBeTruthy();
+    expect(screen.queryByText('2026-07-21T11:00:00.000Z')).toBeNull();
+    expect(screen.getByText('Esperando la confirmación del cliente.')).toBeTruthy();
   });
 
   it('shows an access error when the professional is not selected', async () => {
