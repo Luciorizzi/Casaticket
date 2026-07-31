@@ -169,11 +169,16 @@ jest.mock('@/features/professional/public-profile-screen', () => {
   };
 });
 
+jest.mock('@/features/professional/public-profile-api', () => ({
+  getPublicProfessionalProfile: jest.fn().mockResolvedValue({ avatarUrl: 'https://signed.local/avatar.jpg' }),
+}));
+
 import {
   CustomerApplicationDetailScreen,
   CustomerCreateRequestScreen,
   CustomerRequestDetailScreen,
   CustomerRequestDetailsScreen,
+  CustomerRequestsScreen,
 } from '@/features/customer/screens';
 
 const activeQueryClients: QueryClient[] = [];
@@ -480,6 +485,35 @@ describe('customer service request screens', () => {
     });
   });
 
+  it('separates active, completed and cancelled requests without duplicates', async () => {
+    mockListOwnServiceRequests.mockResolvedValue([
+      createRequest({ id: 'active', title: 'Solicitud activa' }),
+      createRequest({ id: 'completed', title: 'Solicitud finalizada', jobStatus: 'completed' }),
+      createRequest({ id: 'cancelled', title: 'Solicitud cancelada', status: 'cancelled' }),
+    ]);
+    renderWithQueryClient(<CustomerRequestsScreen />);
+    expect(await screen.findByText('Solicitud activa')).toBeTruthy();
+    expect(screen.queryByText('Solicitud finalizada')).toBeNull();
+    fireEvent.press(screen.getByText('Finalizadas'));
+    expect(screen.getByText('Solicitud finalizada')).toBeTruthy();
+    fireEvent.press(screen.getByText('Canceladas'));
+    expect(screen.getByText('Solicitud cancelada')).toBeTruthy();
+  });
+
+  it('prioritizes an active request with a customer action and opens its target', async () => {
+    mockListOwnServiceRequests.mockResolvedValue([
+      createRequest({ id: 'recent', title: 'Sin acción', publishedAt: '2026-07-31T12:00:00Z' }),
+      createRequest({ id: 'pending', title: 'Con acción', publishedAt: '2026-07-20T12:00:00Z', pendingCustomerAction: {
+        type: 'application', label: 'Nueva postulación para revisar', ctaLabel: 'Ver profesionales', priority: 250,
+        occurredAt: '2026-07-30T12:00:00Z', applicationId: 'application-9', jobId: null,
+      } }),
+    ]);
+    renderWithQueryClient(<CustomerRequestsScreen />);
+    expect((await screen.findAllByText(/acción|postulación/)).length).toBeGreaterThan(0);
+    fireEvent.press(screen.getByText('Ver profesionales'));
+    expect(mockPush).toHaveBeenCalledWith(expect.objectContaining({ pathname: '/(customer)/requests/[id]/applications/[applicationId]' }));
+  });
+
   it('returns from the main request detail to Mis solicitudes explicitly', async () => {
     mockGetOwnServiceRequest.mockResolvedValue(createRequest());
     renderWithQueryClient(<CustomerRequestDetailScreen requestId="request-1" />);
@@ -533,6 +567,7 @@ describe('customer service request screens', () => {
     renderWithQueryClient(<CustomerRequestDetailScreen requestId="request-1" />);
 
     await waitFor(() => expect(screen.getAllByText('Profesional seleccionado').length).toBeGreaterThan(0));
+    await waitFor(() => expect(screen.getByLabelText('Foto de Pro Demo')).toBeTruthy());
     expect(screen.queryByText('Visita')).toBeNull();
     expect(screen.queryByText('Diagnóstico')).toBeNull();
   });

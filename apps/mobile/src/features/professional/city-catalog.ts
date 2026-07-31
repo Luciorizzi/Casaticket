@@ -6,8 +6,8 @@ export interface CityOption {
 
 export const BUENOS_AIRES_CITY_OPTIONS = [
   {
-    label: 'CABA',
-    value: 'caba',
+    label: 'Ciudad Autónoma de Buenos Aires',
+    value: 'ciudad_autonoma_de_buenos_aires',
     aliases: [
       'caba',
       'ciudad autonoma de buenos aires',
@@ -61,5 +61,6 @@ export function getCityFilterValue(city: string): string {
     option.aliases.some((alias) => normalizeCityName(alias) === normalizedCity),
   );
 
-  return catalogOption?.value ?? normalizedCity;
+  return catalogOption ? normalizeCity(catalogOption.label) : normalizeCity(city);
 }
+import { normalizeCity } from '@/features/location/location';

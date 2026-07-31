@@ -1,9 +1,10 @@
-import type { PropsWithChildren, ReactNode } from 'react';
+import type { PropsWithChildren, ReactElement, ReactNode } from 'react';
 
 import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  type RefreshControlProps,
   StyleSheet,
   Text,
   View,
@@ -17,9 +18,10 @@ interface ScreenProps extends PropsWithChildren {
   subtitle?: string;
   footer?: ReactNode;
   scroll?: boolean;
+  refreshControl?: ReactElement<RefreshControlProps>;
 }
 
-export function Screen({ children, footer, scroll = true, subtitle, title }: ScreenProps) {
+export function Screen({ children, footer, refreshControl, scroll = true, subtitle, title }: ScreenProps) {
   const content = (
     <View style={styles.container}>
       {title ? (
@@ -40,7 +42,7 @@ export function Screen({ children, footer, scroll = true, subtitle, title }: Scr
         style={styles.flex}
       >
         {scroll ? (
-          <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+          <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled" refreshControl={refreshControl}>
             {content}
           </ScrollView>
         ) : (

@@ -11,6 +11,7 @@ export default function CustomerLayout() {
       <Tabs.Screen name="requests/[id]/details" options={{ href: null, title: 'Detalles' }} />
       <Tabs.Screen name="requests/[id]/applications/[applicationId]" options={{ href: null, title: 'Propuesta' }} />
       <Tabs.Screen name="jobs/[jobId]" options={{ href: null, title: 'Progreso' }} />
+      <Tabs.Screen name="jobs/[jobId]/visit" options={{ href: null, title: 'Visita' }} />
       <Tabs.Screen name="profile" options={{ tabBarIcon: createTabIcon('person-circle-outline', 'person-circle'), title: 'Perfil' }} />
       <Tabs.Screen name="profile/personal" options={{ href: null, title: 'Datos personales' }} />
       <Tabs.Screen name="profile/location" options={{ href: null, title: 'Ubicación' }} />

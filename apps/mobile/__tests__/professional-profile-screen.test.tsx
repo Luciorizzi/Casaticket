@@ -10,6 +10,7 @@ const mockSignOut = jest.fn();
 const mockSetProfileFromMutation = jest.fn();
 const mockSaveProfessionalOnboarding = jest.fn();
 const mockListActiveCategories = jest.fn();
+const mockResolveProfileAvatarUrl = jest.fn();
 
 jest.mock('expo-router', () => ({
   router: {
@@ -91,6 +92,11 @@ jest.mock('@/features/profile/api', () => ({
   saveProfessionalOnboarding: (...args: unknown[]) => mockSaveProfessionalOnboarding(...args),
 }));
 
+jest.mock('@/features/profile/avatar-api', () => ({
+  profileAvatarQueryKey: (path: string | null) => ['profile-avatar', path],
+  resolveProfileAvatarUrl: (...args: unknown[]) => mockResolveProfileAvatarUrl(...args),
+}));
+
 import {
   ProfessionalCategoriesScreen,
   ProfessionalProfileHubScreen,
@@ -113,6 +119,8 @@ describe('professional profile screens', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockListActiveCategories.mockResolvedValue(categories);
+    profile.avatarPath = null;
+    mockResolveProfileAvatarUrl.mockResolvedValue('https://signed.local/profile.jpg');
     mockSaveProfessionalOnboarding.mockResolvedValue({
       profile,
       professionalProfile,
@@ -148,6 +156,14 @@ describe('professional profile screens', () => {
 
     fireEvent.press(screen.getByText('Ver cómo me ven los clientes'));
     expect(mockPush).toHaveBeenCalledWith('/professional/professional-1');
+  });
+
+  it('resolves and renders the saved avatar in the private profile header', async () => {
+    profile.avatarPath = 'avatars/user-1/profile-123.jpg';
+    renderWithQueryClient(<ProfessionalProfileHubScreen />);
+
+    await waitFor(() => expect(mockResolveProfileAvatarUrl).toHaveBeenCalledWith(profile.avatarPath));
+    await waitFor(() => expect(screen.getByLabelText('Foto de Lucía Profesional')).toBeTruthy());
   });
 
   it('searches, selects and saves professional categories', async () => {

@@ -51,6 +51,9 @@ interface JobRow {
   updated_at: string;
 }
 
+interface JobLocationRow { job_id: string; request_id: string; address_text: string; city: string; province: string }
+export interface JobLocation { jobId: string; requestId: string; addressText: string; city: string; province: string }
+
 interface JobPaymentRow {
   payment_id?: string;
   id?: string;
@@ -114,6 +117,7 @@ interface JobReviewRow {
 }
 
 export const professionalJobQueryKey = (jobId: string) => ['professional-job', jobId] as const;
+export const jobLocationQueryKey = (jobId: string) => ['job-location', jobId] as const;
 export const customerJobByIdQueryKey = (jobId: string) => ['customer-job-by-id', jobId] as const;
 export const customerJobQueryKey = (requestId: string) => ['customer-job', requestId] as const;
 export const jobPaymentQueryKey = (jobId: string) => ['job-payment', jobId] as const;
@@ -255,6 +259,16 @@ export async function getProfessionalJobById(jobId: string): Promise<Job> {
   }
 
   return mapJob(data as JobRow);
+}
+
+export async function getJobLocation(jobId: string): Promise<JobLocation | null> {
+  const { data, error } = await supabase.rpc('get_job_location', { p_job_id: jobId });
+  if (error) {
+    logDevelopmentJobError('job:get-location', error, { jobId });
+    throw error;
+  }
+  const row = firstRow<JobLocationRow>(data);
+  return row ? { addressText: row.address_text, city: row.city, jobId: row.job_id, province: row.province, requestId: row.request_id } : null;
 }
 
 export async function getCustomerJobById(jobId: string): Promise<Job> {

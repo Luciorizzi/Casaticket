@@ -5,12 +5,12 @@ const mockInsert = jest.fn((payload: Record<string, unknown>) => {
   return { select: mockInsertSelect };
 });
 const mockListOrder = jest.fn();
+const mockJobsIn = jest.fn();
 const mockGetSingle = jest.fn();
 const mockSelectEq = jest.fn(() => ({ single: mockGetSingle }));
-const mockSelect = jest.fn(() => ({
-  eq: mockSelectEq,
-  order: mockListOrder,
-}));
+const mockSelect = jest.fn((columns?: string) => columns === 'request_id,status,updated_at'
+  ? { in: mockJobsIn }
+  : { eq: mockSelectEq, order: mockListOrder });
 const mockCancelSingle = jest.fn();
 const mockCancelSelect = jest.fn(() => ({ single: mockCancelSingle }));
 const mockCancelEqStatus = jest.fn(() => ({ select: mockCancelSelect }));
@@ -100,6 +100,7 @@ describe('service request api', () => {
     });
     mockInsertSingle.mockResolvedValue({ data: createServiceRequestRow(), error: null });
     mockListOrder.mockResolvedValue({ data: [createServiceRequestRow()], error: null });
+    mockJobsIn.mockResolvedValue({ data: [], error: null });
     mockCancelSingle.mockResolvedValue({
       data: createServiceRequestRow({ status: 'cancelled' }),
       error: null,
@@ -120,6 +121,12 @@ describe('service request api', () => {
       requestType: 'specific_task',
       urgency: 'soon',
       addressText: 'Calle 123',
+      formattedAddress: 'Calle 123, Lanús, Buenos Aires',
+      street: 'Calle',
+      streetNumber: '123',
+      postalCode: null,
+      addressProvider: 'temporary_catalog',
+      providerPlaceId: 'mock:calle-123',
       city: 'Lanus',
       province: 'Buenos Aires',
       preferredDate: null,
@@ -143,6 +150,12 @@ describe('service request api', () => {
       requestType: 'unsure',
       urgency: 'flexible',
       addressText: 'Calle 123',
+      formattedAddress: 'Calle 123, Lanús, Buenos Aires',
+      street: 'Calle',
+      streetNumber: '123',
+      postalCode: null,
+      addressProvider: 'temporary_catalog',
+      providerPlaceId: 'mock:calle-123',
       city: 'Lanus',
       province: 'Buenos Aires',
       preferredDate: null,

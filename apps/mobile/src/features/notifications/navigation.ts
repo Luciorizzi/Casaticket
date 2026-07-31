@@ -4,7 +4,7 @@ import type { AppNotification } from '@/features/notifications/api';
 
 const allowedRoutes = new Set([
   '/(customer)/requests/[id]', '/chat/[conversationId]', '/(customer)/jobs/[jobId]',
-  '/(professional)/jobs/[jobId]', '/(professional)/jobs/[jobId]/visit',
+  '/(professional)/jobs/[jobId]', '/(professional)/jobs/[jobId]/visit', '/(customer)/jobs/[jobId]/visit',
   '/(professional)/jobs/[jobId]/quote', '/(professional)/jobs/[jobId]/payment',
   '/(professional)/jobs/[jobId]/completion',
 ]);

@@ -13,6 +13,7 @@ const mockDisputeCustomerJobCompletion = jest.fn();
 const mockGetCustomerJobById = jest.fn();
 const mockGetCustomerJobByRequest = jest.fn();
 const mockGetJobPayment = jest.fn();
+const mockGetJobLocation = jest.fn();
 const mockListJobReviews = jest.fn();
 const mockListJobQuotes = jest.fn();
 const mockProcessPayment = jest.fn();
@@ -48,6 +49,8 @@ jest.mock('@/features/jobs/api', () => ({
   getCustomerJobById: (...args: unknown[]) => mockGetCustomerJobById(...args),
   getCustomerJobByRequest: (...args: unknown[]) => mockGetCustomerJobByRequest(...args),
   getJobPayment: (...args: unknown[]) => mockGetJobPayment(...args),
+  getJobLocation: (...args: unknown[]) => mockGetJobLocation(...args),
+  jobLocationQueryKey: (jobId: string) => ['job-location', jobId],
   jobPaymentQueryKey: (jobId: string) => ['job-payment', jobId],
   jobQuotesQueryKey: (jobId: string) => ['job-quotes', jobId],
   jobReviewsQueryKey: (jobId: string) => ['job-reviews', jobId],
@@ -61,7 +64,7 @@ jest.mock('@/features/jobs/api', () => ({
   retryMockPayment: (...args: unknown[]) => mockRetryMockPayment(...args),
 }));
 
-import { CustomerJobDetailScreen, CustomerJobPanel, CustomerJobSummaryPanel } from '@/features/jobs/customer-job-panel';
+import { CustomerJobDetailScreen, CustomerJobPanel, CustomerJobSummaryPanel, CustomerJobVisitScreen } from '@/features/jobs/customer-job-panel';
 
 const activeQueryClients: QueryClient[] = [];
 
@@ -196,6 +199,7 @@ describe('customer job panel', () => {
     mockGetCustomerJobByRequest.mockResolvedValue(createJob());
     mockGetCustomerJobById.mockResolvedValue(createJob());
     mockGetJobPayment.mockResolvedValue(null);
+    mockGetJobLocation.mockResolvedValue({ addressText: 'Calle 123', city: 'Lanús', jobId: 'job-1', province: 'Buenos Aires', requestId: 'request-1' });
     mockListJobReviews.mockResolvedValue([]);
     mockListJobQuotes.mockResolvedValue([]);
     mockConfirmCustomerJobVisit.mockResolvedValue(createJob({ status: 'visit_confirmed' }));
@@ -246,6 +250,30 @@ describe('customer job panel', () => {
     });
   });
 
+  it('shows a pending visit banner and opens the dedicated visit route with both ids', async () => {
+    renderWithQueryClient(<CustomerJobSummaryPanel requestId="request-1" />);
+    await waitFor(() => expect(screen.getByText('Tenés una visita pendiente')).toBeTruthy());
+    fireEvent.press(screen.getByText('Revisar visita'));
+    expect(mockPush).toHaveBeenCalledWith({ pathname: '/(customer)/jobs/[jobId]/visit', params: { jobId: 'job-1', requestId: 'request-1' } });
+    expect(screen.getByText('Pendiente de tu confirmación')).toBeTruthy();
+  });
+
+  it('loads visit data and returns explicitly to the same job process', async () => {
+    mockGetCustomerJobById.mockResolvedValueOnce(createJob({ scheduledTimeText: '10:00:00' }));
+    renderWithQueryClient(<CustomerJobVisitScreen jobId="job-1" requestId="request-1" />);
+    await waitFor(() => expect(screen.getByText('Confirmar visita')).toBeTruthy());
+    expect(screen.getByText('10:00')).toBeTruthy();
+    expect(screen.getByText('Calle 123 · Lanús, Buenos Aires')).toBeTruthy();
+    fireEvent.press(screen.getByText('Volver a la solicitud'));
+    expect(mockReplace).toHaveBeenCalledWith({ pathname: '/(customer)/requests/[id]', params: { id: 'request-1', jobId: 'job-1' } });
+  });
+
+  it('renders visit and process copy without mojibake sequences', async () => {
+    renderWithQueryClient(<CustomerJobVisitScreen jobId="job-1" requestId="request-1" />);
+    await waitFor(() => expect(screen.getByText(/Detalle de la coordinación/)).toBeTruthy());
+    expect(JSON.stringify(screen.toJSON())).not.toMatch(/Ã|Â|â|�/);
+  });
+
   it('shows only a compact work process summary and navigates by real job id', async () => {
     mockGetCustomerJobByRequest.mockResolvedValueOnce(
       createJob({
@@ -275,7 +303,7 @@ describe('customer job panel', () => {
 
     expect(mockPush).toHaveBeenCalledWith({
       pathname: '/(customer)/jobs/[jobId]',
-      params: { jobId: 'job-1' },
+      params: { jobId: 'job-1', requestId: 'request-1' },
     });
   });
 
@@ -292,7 +320,7 @@ describe('customer job panel', () => {
     });
   });
 
-  it('returns from work progress using navigation history', async () => {
+  it('returns from work progress explicitly to the related request', async () => {
     mockGetCustomerJobById.mockResolvedValueOnce(createJob({ requestId: 'request-1' }));
 
     renderWithQueryClient(<CustomerJobDetailScreen jobId="job-1" />);
@@ -301,10 +329,10 @@ describe('customer job panel', () => {
       expect(screen.getByText('Confirmar visita')).toBeTruthy();
     });
 
-    fireEvent.press(screen.getByText('Volver').parent!);
+    fireEvent.press(screen.getByText('Volver al detalle'));
 
-    expect(mockBack).toHaveBeenCalledTimes(1);
-    expect(mockReplace).not.toHaveBeenCalledWith({
+    expect(mockBack).not.toHaveBeenCalled();
+    expect(mockReplace).toHaveBeenCalledWith({
       pathname: '/(customer)/requests/[id]',
       params: { id: 'request-1' },
     });
@@ -320,7 +348,7 @@ describe('customer job panel', () => {
       expect(screen.getByText('Confirmar visita')).toBeTruthy();
     });
 
-    fireEvent.press(screen.getByText('Volver').parent!);
+    fireEvent.press(screen.getByText('Volver al detalle'));
 
     expect(mockBack).not.toHaveBeenCalled();
     expect(mockReplace).toHaveBeenCalledWith({

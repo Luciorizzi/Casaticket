@@ -151,6 +151,21 @@ export interface ServiceRequest {
 
 export interface ServiceRequestWithCategory extends ServiceRequest {
   category: Category | null;
+  jobStatus?: JobStatus | null;
+  lifecycleUpdatedAt?: string;
+  pendingCustomerAction?: CustomerPendingAction | null;
+}
+
+export type CustomerPendingActionType = 'application' | 'visit' | 'quote' | 'completion' | 'dispute' | 'message';
+
+export interface CustomerPendingAction {
+  type: CustomerPendingActionType;
+  label: string;
+  ctaLabel: string;
+  priority: number;
+  occurredAt: string;
+  applicationId: string | null;
+  jobId: string | null;
 }
 
 export interface ProfessionalOpportunity {

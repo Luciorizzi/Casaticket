@@ -156,22 +156,20 @@ describe('professional opportunities api', () => {
   });
 
   it('creates an application for the provided professional and request', async () => {
+    mockRpc
+      .mockResolvedValueOnce({ data: [{ application_id: 'application-1', conversation_id: 'conversation-1', message_id: 'message-1' }], error: null })
+      .mockResolvedValueOnce({ data: [createApplicationRow()], error: null });
     await createApplication('professional-1', 'request-1', {
       message: 'Puedo revisar el problema esta semana con herramientas propias.',
       proposalType: 'diagnostic_visit',
       visitPrice: 5000,
       estimatedPrice: null,
       estimatedDurationText: 'Una visita breve',
-      availabilityText: 'Martes por la tarde',
     });
 
-    expect(mockInsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        professional_id: 'professional-1',
-        request_id: 'request-1',
-        status: 'submitted',
-      }),
-    );
+    expect(mockRpc).toHaveBeenCalledWith('create_professional_application_with_message', expect.objectContaining({
+      p_request_id: 'request-1', p_message: expect.any(String), p_visit_price: 5000,
+    }));
   });
 
   it('gets only the current professional application for a request', async () => {

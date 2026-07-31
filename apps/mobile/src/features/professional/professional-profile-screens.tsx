@@ -25,6 +25,7 @@ import { colors } from '@/components/ui/theme';
 import { useAuthSession } from '@/features/auth/auth-provider';
 import { listActiveCategories } from '@/features/categories/api';
 import { saveProfessionalOnboarding } from '@/features/profile/api';
+import { profileAvatarQueryKey, resolveProfileAvatarUrl } from '@/features/profile/avatar-api';
 import { getUserFacingErrorMessage } from '@/lib/errors';
 import { queryKeys } from '@/lib/query-keys';
 import { ProfileMenuRow, ProfileSectionScreen } from '@/components/ui/profile-navigation';
@@ -99,6 +100,11 @@ export function ProfessionalProfileHubScreen() {
   const selectedIds =
     sessionState.status === 'authenticated' ? sessionState.professionalCategoryIds : [];
   const categoriesQuery = useQuery({ queryKey: queryKeys.categories, queryFn: listActiveCategories });
+  const avatarQuery = useQuery({
+    enabled: Boolean(profile?.avatarPath),
+    queryFn: () => resolveProfileAvatarUrl(profile?.avatarPath ?? null),
+    queryKey: profileAvatarQueryKey(profile?.avatarPath ?? null),
+  });
   const categoryNames = (categoriesQuery.data ?? [])
     .filter((category) => selectedIds.includes(category.id))
     .map((category) => category.name);
@@ -115,7 +121,7 @@ export function ProfessionalProfileHubScreen() {
     <Screen subtitle="Administrá tu información profesional por secciones." title="Perfil">
       <Card>
         <View style={styles.profileHeader}>
-          <Avatar name={getProfileDisplayName(profile)} />
+          <Avatar name={getProfileDisplayName(profile)} size={56} uri={avatarQuery.data ?? null} />
           <View style={styles.profileHeaderCopy}>
             <Text style={styles.profileName}>{getProfileDisplayName(profile)}</Text>
             <Text style={styles.profileMeta}>

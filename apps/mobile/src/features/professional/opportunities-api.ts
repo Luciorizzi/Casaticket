@@ -272,29 +272,23 @@ export async function createApplication(
   requestId: string,
   input: CreateApplicationInput,
 ): Promise<ProfessionalApplication> {
-  const payload = {
-    request_id: requestId,
-    professional_id: professionalId,
-    message: input.message,
-    proposal_type: input.proposalType,
-    visit_price: input.visitPrice,
-    estimated_price: input.estimatedPrice,
-    estimated_duration_text: input.estimatedDurationText,
-    availability_text: input.availabilityText,
-    status: 'submitted',
-  } as const;
-  const { data, error } = await supabase
-    .from('applications')
-    .insert(payload)
-    .select('*')
-    .single();
+  const { error } = await supabase.rpc('create_professional_application_with_message', {
+    p_request_id: requestId,
+    p_proposal_type: input.proposalType,
+    p_message: input.message,
+    p_visit_price: input.visitPrice,
+    p_estimated_price: input.estimatedPrice,
+    p_estimated_duration_text: input.estimatedDurationText,
+  });
 
   if (error) {
     logDevelopmentSupabaseError('professional-applications:create', error);
     throw error;
   }
 
-  return mapApplication(data as ApplicationRow);
+  const application = await getOwnApplication(requestId, professionalId);
+  if (!application) throw new Error('La postulación fue creada pero no pudo recuperarse.');
+  return application;
 }
 
 export async function withdrawApplication(

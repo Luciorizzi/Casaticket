@@ -78,7 +78,6 @@ export function PublicProfessionalProfileScreen({
           <StatusBadge value={getApplicationStatusLabel(application.status)} />
           <Text style={styles.body}>{application.message}</Text>
           <Text style={styles.meta}>Postulada: {new Date(application.createdAt).toLocaleDateString('es-AR')}</Text>
-          <Text style={styles.meta}>Disponibilidad: {application.availabilityText}</Text>
           {application.visitPrice !== null ? <Text style={styles.meta}>Visita: ${application.visitPrice.toLocaleString('es-AR')}</Text> : null}
           {application.estimatedPrice !== null ? <Text style={styles.meta}>Estimado: ${application.estimatedPrice.toLocaleString('es-AR')}</Text> : null}
           <View style={styles.actions}>

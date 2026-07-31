@@ -317,6 +317,7 @@ describe('professional opportunities screens', () => {
     });
 
     expect(screen.queryByText('Calle privada 123')).toBeNull();
+    expect(screen.getByText('Lanus, Buenos Aires')).toBeTruthy();
     expect(screen.getByText('1 oportunidad')).toBeTruthy();
     expect(screen.getByText('Necesito resolver una pérdida debajo de la bacha.').props.numberOfLines).toBe(2);
     fireEvent.press(screen.getByTestId('professional-opportunity-card'));
@@ -565,12 +566,16 @@ describe('professional opportunities screens', () => {
 
     fireEvent.press(screen.getByLabelText('Filtrar por ciudad'));
     fireEvent.changeText(screen.getByPlaceholderText('Buscar ciudad'), 'caba');
-    expect(screen.getByText('CABA')).toBeTruthy();
+    expect(screen.getByText('Ciudad Autónoma de Buenos Aires')).toBeTruthy();
     expect(screen.queryByText('Lanús')).toBeNull();
-    fireEvent.press(screen.getByText('CABA'));
+    fireEvent.press(screen.getByText('Ciudad Autónoma de Buenos Aires'));
 
     expect(screen.getByText('Rotura de tecla de luz')).toBeTruthy();
     expect(screen.queryByText('Tablero en Lanús')).toBeNull();
+    fireEvent.press(screen.getByLabelText('Filtrar por ciudad'));
+    fireEvent.press(screen.getByText('Todas las ciudades'));
+    expect(screen.getByText('Rotura de tecla de luz')).toBeTruthy();
+    expect(screen.getByText('Tablero en Lanús')).toBeTruthy();
   });
 
   it('filters opportunities by urgency and combines filters', async () => {
@@ -604,7 +609,7 @@ describe('professional opportunities screens', () => {
     expect(screen.getByText('3 oportunidades')).toBeTruthy();
 
     fireEvent.press(screen.getByLabelText('Filtrar por ciudad'));
-    fireEvent.press(screen.getByText('CABA'));
+    fireEvent.press(screen.getByText('Ciudad Autónoma de Buenos Aires'));
     fireEvent.press(screen.getByLabelText('Filtrar por urgencia'));
     fireEvent.press(screen.getByText('Flexible'));
 
@@ -697,14 +702,18 @@ describe('professional opportunities screens', () => {
     });
   });
 
-  it('renders a back button, uses history and keeps the proposal detail scrollable', async () => {
+  it('renders a deterministic back button to opportunities and keeps the proposal detail scrollable', async () => {
     renderWithQueryClient(<ProfessionalOpportunityDetailScreen requestId="request-1" />);
 
     await waitFor(() => expect(screen.getByText('Enviar postulación')).toBeTruthy());
+    expect(screen.getByText('Ciudad: Lanus')).toBeTruthy();
+    expect(screen.getByText('Provincia: Buenos Aires')).toBeTruthy();
+    expect(screen.getByText('La dirección exacta se habilita cuando el cliente selecciona al profesional.')).toBeTruthy();
+    expect(screen.queryByText('Calle privada 123')).toBeNull();
     expect(screen.UNSAFE_getByType(ScrollView)).toBeTruthy();
     fireEvent.press(screen.getByLabelText('Volver a oportunidades'));
-    expect(mockBack).toHaveBeenCalledTimes(1);
-    expect(mockReplace).not.toHaveBeenCalled();
+    expect(mockBack).not.toHaveBeenCalled();
+    expect(mockReplace).toHaveBeenCalledWith('/(professional)/opportunities');
     expect(screen.getByText('Enviar postulación')).toBeTruthy();
   });
 

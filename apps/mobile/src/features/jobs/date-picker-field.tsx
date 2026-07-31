@@ -15,8 +15,14 @@ interface DatePickerFieldProps {
   value: string | null;
 }
 
+interface TimePickerFieldProps {
+  onChange: (value: string) => void;
+  placeholder?: string;
+  value: string | null;
+}
+
 function todayDateString(): string {
-  return new Date().toISOString().slice(0, 10);
+  return toDateString(new Date());
 }
 
 function toDateString(date: Date): string {
@@ -56,10 +62,15 @@ export function DatePickerField({
   value,
 }: DatePickerFieldProps) {
   const [open, setOpen] = useState(false);
+  const [draftDate, setDraftDate] = useState<Date>(() => fromDateString(value));
   const minimumDate = useMemo(() => (disablePast ? fromDateString(todayDateString()) : undefined), [
     disablePast,
   ]);
   const selectedDate = useMemo(() => fromDateString(value), [value]);
+  const openPicker = () => {
+    setDraftDate(new Date(selectedDate.getTime()));
+    setOpen(true);
+  };
 
   const handleChange = (event: DateTimePickerEvent, nextDate?: Date) => {
     if (Platform.OS === 'android') {
@@ -69,8 +80,11 @@ export function DatePickerField({
     if (event.type === 'dismissed' || !nextDate) {
       return;
     }
+    if (minimumDate && nextDate.getTime() < minimumDate.getTime()) return;
 
-    onChange(toDateString(nextDate));
+    const nextDraft = new Date(nextDate.getTime());
+    setDraftDate(nextDraft);
+    if (Platform.OS === 'android') onChange(toDateString(nextDraft));
   };
   const picker = (
     <DateTimePicker
@@ -82,7 +96,7 @@ export function DatePickerField({
       onChange={handleChange}
       textColor={colors.text}
       themeVariant="light"
-      value={selectedDate}
+      value={draftDate}
     />
   );
 
@@ -90,7 +104,7 @@ export function DatePickerField({
     <View style={styles.stack}>
       <Pressable
         accessibilityRole="button"
-        onPress={() => setOpen(true)}
+        onPress={openPicker}
         style={styles.trigger}
       >
         <Text style={value ? styles.value : styles.placeholder}>📅 {formatDate(value, placeholder)}</Text>
@@ -108,7 +122,7 @@ export function DatePickerField({
               <View style={styles.pickerSurface} testID="date-picker-surface">
                 {picker}
               </View>
-              <Button onPress={() => setOpen(false)} variant="secondary">
+              <Button onPress={() => { onChange(toDateString(draftDate)); setOpen(false); }} variant="secondary">
                 Listo
               </Button>
             </View>
@@ -121,6 +135,54 @@ export function DatePickerField({
       ) : null}
     </View>
   );
+}
+
+export function normalizeTime(date: Date): string {
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:00`;
+}
+
+export function formatTime(value: string | null, placeholder = 'Seleccionar horario'): string {
+  const match = value?.match(/^([01]\d|2[0-3]):([0-5]\d)(?::[0-5]\d)?$/);
+  return match ? `${match[1]}:${match[2]}` : placeholder;
+}
+
+function timeToDate(value: string | null): Date {
+  const date = new Date();
+  const match = value?.match(/^([01]\d|2[0-3]):([0-5]\d)/);
+  if (match) date.setHours(Number(match[1]), Number(match[2]), 0, 0);
+  return date;
+}
+
+export function TimePickerField({ onChange, placeholder = 'Seleccionar horario', value }: TimePickerFieldProps) {
+  const [open, setOpen] = useState(false);
+  const selectedTime = useMemo(() => timeToDate(value), [value]);
+  const picker = <DateTimePicker
+    accentColor={colors.accent}
+    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+    is24Hour
+    locale="es-AR"
+    mode="time"
+    onChange={(event, nextDate) => {
+      if (Platform.OS === 'android') setOpen(false);
+      if (event.type !== 'dismissed' && nextDate) onChange(normalizeTime(nextDate));
+    }}
+    textColor={colors.text}
+    themeVariant="light"
+    value={selectedTime}
+  />;
+
+  return <View style={styles.stack}>
+    <Pressable accessibilityLabel="Seleccionar horario" accessibilityRole="button" onPress={() => setOpen(true)} style={styles.trigger}>
+      <Text style={value ? styles.value : styles.placeholder}>{formatTime(value, placeholder)}</Text>
+    </Pressable>
+    {open && Platform.OS === 'ios' ? <Modal animationType="fade" onRequestClose={() => setOpen(false)} transparent visible>
+      <View style={styles.modalOverlay}><View style={styles.modalCard}>
+        <Text style={styles.modalTitle}>Seleccionar horario</Text>
+        <View style={styles.pickerSurface} testID="time-picker-surface">{picker}</View>
+        <Button onPress={() => setOpen(false)} variant="secondary">Listo</Button>
+      </View></View>
+    </Modal> : open ? <View style={styles.pickerSurface} testID="time-picker-surface">{picker}</View> : null}
+  </View>;
 }
 
 const styles = StyleSheet.create({
@@ -171,5 +233,8 @@ const styles = StyleSheet.create({
 
 export const datePickerTestUtils = {
   formatDate,
+  formatTime,
+  normalizeTime,
   toDateString,
+  todayDateString,
 };

@@ -127,6 +127,8 @@ describe('validation schemas', () => {
       requestType: 'specific_task' as const,
       urgency: 'soon' as const,
       addressText: 'Calle 123',
+      formattedAddress: 'Calle 123, Lanús, Buenos Aires', street: 'Calle', streetNumber: '123', postalCode: null,
+      addressProvider: 'temporary_catalog', providerPlaceId: 'mock:calle-123',
       city: 'Lanus',
       province: 'Buenos Aires',
       preferredDate: undefined,
@@ -157,6 +159,8 @@ describe('validation schemas', () => {
         requestType: 'unsure',
         urgency: 'scheduled',
         addressText: 'Calle 123',
+        formattedAddress: 'Calle 123, Lanús, Buenos Aires', street: 'Calle', streetNumber: '123', postalCode: null,
+        addressProvider: 'temporary_catalog', providerPlaceId: 'mock:calle-123',
         city: 'Lanus',
         province: 'Buenos Aires',
         preferredDate: '2020-01-01',
@@ -173,12 +177,12 @@ describe('validation schemas', () => {
       visitPrice: 5000,
       estimatedPrice: null,
       estimatedDurationText: '',
-      availabilityText: 'Martes o jueves por la tarde.',
     };
 
     expect(createApplicationSchema.safeParse(validPayload).success).toBe(true);
     expect(createApplicationSchema.safeParse({ ...validPayload, message: 'Muy corto.' }).success).toBe(false);
     expect(createApplicationSchema.safeParse({ ...validPayload, visitPrice: -1 }).success).toBe(false);
+    expect(createApplicationSchema.safeParse({ ...validPayload, visitPrice: 0 }).success).toBe(false);
     expect(createApplicationSchema.safeParse({ ...validPayload, visitPrice: null }).success).toBe(false);
     expect(
       createApplicationSchema.safeParse({

@@ -69,9 +69,12 @@ import { ProfessionalProfileForm } from '@/features/professional/professional-pr
 import { ProfessionalProfileHubScreen } from '@/features/professional/professional-profile-screens';
 import { NotificationBell } from '@/features/notifications/notification-access';
 import { saveProfessionalOnboarding } from '@/features/profile/api';
+import { profileAvatarQueryKey, resolveProfileAvatarUrl } from '@/features/profile/avatar-api';
 import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
 import { queryKeys } from '@/lib/query-keys';
 import { AttachmentGallerySection } from '@/features/attachments/components';
+import { formatLocation, getCityDisplayName } from '@/features/location/location';
+import { LocationSummary } from '@/features/location/location-summary';
 
 export function ProfessionalOnboardingScreen() {
   return (
@@ -97,6 +100,11 @@ export function ProfessionalHomeScreen() {
     queryKey: queryKeys.categories,
     queryFn: listActiveCategories,
   });
+  const avatarQuery = useQuery({
+    enabled: Boolean(profile?.avatarPath),
+    queryFn: () => resolveProfileAvatarUrl(profile?.avatarPath ?? null),
+    queryKey: profileAvatarQueryKey(profile?.avatarPath ?? null),
+  });
 
   const categoryLabels = (categoryQuery.data ?? [])
     .filter((category) => professionalCategoryIds.includes(category.id))
@@ -118,7 +126,7 @@ export function ProfessionalHomeScreen() {
       <View style={styles.headerAction}><NotificationBell /></View>
       <Card>
         <View style={styles.row}>
-          <Avatar name={getProfileDisplayName(profile)} />
+          <Avatar name={getProfileDisplayName(profile)} uri={avatarQuery.data ?? null} />
           <View style={styles.copy}>
             <Text style={styles.welcomeTitle}>Hola, {profile.firstName}</Text>
             <Text style={styles.welcomeText}>
@@ -622,20 +630,11 @@ export function ProfessionalOpportunityDetailScreen({ requestId }: { requestId: 
 }
 
 function ProfessionalOpportunityBackButton() {
-  const handleBack = () => {
-    if (router.canGoBack()) {
-      router.back();
-      return;
-    }
-
-    router.replace('/(professional)/opportunities');
-  };
-
   return (
     <Pressable
       accessibilityLabel="Volver a oportunidades"
       accessibilityRole="button"
-      onPress={handleBack}
+      onPress={() => router.replace('/(professional)/opportunities')}
       style={styles.opportunityBackButton}
     >
       <Ionicons color="#bb5e3c" name="chevron-back" size={22} />
@@ -1255,11 +1254,9 @@ function OpportunityListItem({
                 <StatusBadge tone="accent" value={`Postulación ${getApplicationStatusLabel(application.status)}`} />
               ) : null}
             </View>
+            <LocationSummary city={opportunity.city} province={opportunity.province} />
             <Text numberOfLines={1} style={styles.requestMeta}>
-              {opportunity.city} · {getServiceRequestUrgencyLabel(opportunity.urgency)}
-            </Text>
-            <Text numberOfLines={1} style={styles.requestMeta}>
-              {getServiceRequestTypeLabel(opportunity.requestType)}
+              {getServiceRequestUrgencyLabel(opportunity.urgency)} · {getServiceRequestTypeLabel(opportunity.requestType)}
             </Text>
             {opportunity.attachmentCount ? (
               <View style={styles.opportunityAttachmentCount}>
@@ -1290,9 +1287,10 @@ function OpportunityDetailCard({ opportunity }: { opportunity: ProfessionalOppor
         <Text style={styles.requestMeta}>
           Categoría: {opportunity.categoryName ?? 'No estoy seguro del rubro'}
         </Text>
-        <Text style={styles.requestMeta}>
-          Ubicación: {opportunity.city}, {opportunity.province}
-        </Text>
+        <Text style={styles.requestMeta}>Ciudad: {getCityDisplayName(opportunity.city) || 'No informada'}</Text>
+        <Text style={styles.requestMeta}>Provincia: {opportunity.province || 'No informada'}</Text>
+        <Text style={styles.requestMeta}>{formatLocation(opportunity.city, opportunity.province)}</Text>
+        <Text style={styles.requestMeta}>La dirección exacta se habilita cuando el cliente selecciona al profesional.</Text>
         <Text style={styles.requestMeta}>Tipo: {getServiceRequestTypeLabel(opportunity.requestType)}</Text>
         <Text style={styles.requestMeta}>Urgencia: {getServiceRequestUrgencyLabel(opportunity.urgency)}</Text>
         <Text style={styles.requestMeta}>
@@ -1323,7 +1321,6 @@ function ApplicationSummary({ application }: { application: ProfessionalApplicat
           Tipo: {getApplicationProposalTypeLabel(application.proposalType)}
         </Text>
         <Text style={styles.requestDescription}>{application.message}</Text>
-        <Text style={styles.requestMeta}>Disponibilidad: {application.availabilityText}</Text>
         <Text style={styles.requestMeta}>
           Visita: {formatPrice(application.visitPrice) ?? 'Sin precio de visita'}
         </Text>
@@ -1594,11 +1591,11 @@ function createOpportunityCategoryFilters(categories: Category[]): FilterOption[
 function createCityFilterOptions(opportunities: ProfessionalOpportunity[]): FilterOption[] {
   const cityOptionsByValue = new Map<string, FilterOption>(
     BUENOS_AIRES_CITY_OPTIONS.map((option) => [
-      option.value,
+      getCityFilterValue(option.label),
       {
         keywords: option.aliases,
         label: option.label,
-        value: option.value,
+        value: getCityFilterValue(option.label),
       },
     ]),
   );

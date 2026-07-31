@@ -521,26 +521,51 @@ async function main() {
     );
   }
 
-  const ownApplicationInsert = await professionalClient
-    .from('applications')
-    .insert({
-      request_id: ownServiceRequestInsert.data.id,
-      professional_id: professionalProfile.id,
-      message: 'Puedo revisar la perdida esta semana y llevar las herramientas necesarias.',
-      proposal_type: 'diagnostic_visit',
-      visit_price: 5000,
-      estimated_price: null,
-      estimated_duration_text: 'Una visita breve',
-      availability_text: 'Martes o jueves por la tarde',
-      status: 'submitted',
-    })
-    .select('id, status')
-    .single();
+  const initialApplicationMessage = 'Puedo revisar la perdida esta semana y llevar las herramientas necesarias.';
+  const atomicApplicationCall = await professionalClient.rpc('create_professional_application_with_message', {
+    p_request_id: ownServiceRequestInsert.data.id,
+    p_proposal_type: 'diagnostic_visit',
+    p_message: initialApplicationMessage,
+    p_visit_price: 5000,
+    p_estimated_price: null,
+    p_estimated_duration_text: 'Una visita breve',
+  });
+  const atomicApplication = (atomicApplicationCall.data as Array<{ application_id: string; conversation_id: string; message_id: string }> | null)?.[0];
+  const ownApplicationInsert = {
+    error: atomicApplicationCall.error,
+    data: atomicApplication ? { id: atomicApplication.application_id, status: 'submitted' } : null,
+  };
 
-  if (ownApplicationInsert.error || ownApplicationInsert.data.status !== 'submitted') {
+  if (ownApplicationInsert.error || !ownApplicationInsert.data || ownApplicationInsert.data.status !== 'submitted') {
     throw new Error(
       `Professional could not create own application: ${ownApplicationInsert.error?.message ?? 'unknown error'}`,
     );
+  }
+  const ownApplicationId = ownApplicationInsert.data.id;
+
+  const retryApplicationCall = await professionalClient.rpc('create_professional_application_with_message', {
+    p_request_id: ownServiceRequestInsert.data.id,
+    p_proposal_type: 'diagnostic_visit', p_message: initialApplicationMessage, p_visit_price: 5000,
+    p_estimated_price: null, p_estimated_duration_text: 'Una visita breve',
+  });
+  const retryApplication = (retryApplicationCall.data as Array<{ application_id: string; message_id: string }> | null)?.[0];
+  if (retryApplicationCall.error || retryApplication?.application_id !== ownApplicationId || retryApplication.message_id !== atomicApplication?.message_id) {
+    throw new Error('Atomic application retry was not idempotent.');
+  }
+  const invalidVisitPriceCall = await professionalClient.rpc('create_professional_application_with_message', {
+    p_request_id: ownServiceRequestInsert.data.id,
+    p_proposal_type: 'diagnostic_visit', p_message: initialApplicationMessage, p_visit_price: 0,
+    p_estimated_price: null, p_estimated_duration_text: null,
+  });
+  if (!invalidVisitPriceCall.error) throw new Error('Backend accepted a zero diagnostic visit price.');
+  const pendingActionsRead = await customerClient.rpc('list_customer_pending_actions');
+  const pendingActions = (pendingActionsRead.data ?? []) as Array<{ request_id: string; action_type: string }>;
+  if (pendingActionsRead.error || !pendingActions.some((action) => action.request_id === ownServiceRequestInsert.data.id && action.action_type === 'application')) {
+    throw new Error(`Customer pending action projection failed: ${pendingActionsRead.error?.message ?? 'action not found'}`);
+  }
+  const foreignPendingActionsRead = await bootstrapClient.rpc('list_customer_pending_actions');
+  if (foreignPendingActionsRead.error || (foreignPendingActionsRead.data ?? []).some((action: { request_id: string }) => action.request_id === ownServiceRequestInsert.data.id)) {
+    throw new Error('Pending action projection exposed another customer request.');
   }
 
   const ownApplicationTrackingRead = await professionalClient.rpc('list_professional_applications');
@@ -549,7 +574,7 @@ async function main() {
     ownApplicationTrackingRead.error ||
     !((ownApplicationTrackingRead.data ?? []) as { id: string; request_title: string }[]).some(
       (application) =>
-        application.id === ownApplicationInsert.data.id && application.request_title === 'Arreglo de perdida',
+        application.id === ownApplicationId && application.request_title === 'Arreglo de perdida',
     )
   ) {
     throw new Error(
@@ -701,7 +726,7 @@ async function main() {
   const foreignApplicationRead = await bootstrapProfessionalClient
     .from('applications')
     .select('id')
-    .eq('id', ownApplicationInsert.data.id);
+    .eq('id', ownApplicationId);
 
   if (foreignApplicationRead.error) {
     throw new Error(`Unexpected foreign application read error: ${foreignApplicationRead.error.message}`);
@@ -718,7 +743,7 @@ async function main() {
   if (
     foreignApplicationTrackingRead.error ||
     ((foreignApplicationTrackingRead.data ?? []) as { id: string }[]).some(
-      (application) => application.id === ownApplicationInsert.data.id,
+      (application) => application.id === ownApplicationId,
     )
   ) {
     throw new Error('Professional unexpectedly tracked another professional application.');
@@ -1963,7 +1988,7 @@ async function main() {
   const ownApplicationWithdraw = await professionalClient
     .from('applications')
     .update({ status: 'withdrawn', withdrawn_at: new Date().toISOString() })
-    .eq('id', ownApplicationInsert.data.id)
+    .eq('id', ownApplicationId)
     .select('id, status')
     .single();
 
@@ -2150,7 +2175,7 @@ async function main() {
   for (const expectedType of ['application_selected', 'message_received', 'quote_accepted', 'payment_secured', 'job_confirmed']) {
     if (!professionalNotificationTypes.has(expectedType)) throw new Error(`Professional notification missing: ${expectedType}`);
   }
-  const applicationNotificationCount = customerNotifications.data.filter((notification) => notification.dedupe_key === `application:${ownApplicationInsert.data.id}:created`).length;
+  const applicationNotificationCount = customerNotifications.data.filter((notification) => notification.dedupe_key === `application:${ownApplicationId}:created`).length;
   if (applicationNotificationCount !== 1) throw new Error('Notification dedupe did not preserve a single application event.');
 
   const customerNotification = customerNotifications.data.find((notification) => notification.read_at === null);

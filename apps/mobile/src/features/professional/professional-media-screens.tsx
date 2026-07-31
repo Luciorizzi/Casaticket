@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Ionicons } from '@expo/vector-icons';
 import { Alert, StyleSheet, Text, View } from 'react-native';
 
 import { Avatar } from '@/components/ui/avatar';
@@ -14,6 +15,7 @@ import { AttachmentGallery, AttachmentPicker } from '@/features/attachments/comp
 import { deleteAttachment, listAttachments, uploadAttachments, type PendingAttachment } from '@/features/attachments/api';
 import { useAuthSession } from '@/features/auth/auth-provider';
 import { listActiveCategories } from '@/features/categories/api';
+import { profileAvatarQueryKey, resolveProfileAvatarUrl } from '@/features/profile/avatar-api';
 import {
   createPortfolioItem,
   deletePortfolioItem,
@@ -31,27 +33,31 @@ export function ProfessionalAvatarScreen() {
   const profile = sessionState.status === 'authenticated' ? sessionState.profile : null;
   const professionalId = sessionState.status === 'authenticated' ? sessionState.professionalProfile?.id : null;
   const [pending, setPending] = useState<PendingAttachment[]>([]);
+  const [success, setSuccess] = useState(false);
   const publicProfileQuery = useQuery({
     enabled: Boolean(professionalId),
     queryFn: () => getPublicProfessionalProfile(professionalId ?? ''),
     queryKey: ['public-professional-profile', professionalId],
   });
+  const avatarQuery = useQuery({ enabled: Boolean(profile?.avatarPath), queryFn: () => resolveProfileAvatarUrl(profile?.avatarPath ?? null), queryKey: profileAvatarQueryKey(profile?.avatarPath ?? null) });
   const refresh = async () => {
     await refreshProfile();
+    await queryClient.invalidateQueries({ queryKey: ['profile-avatar'] });
     await queryClient.invalidateQueries({ queryKey: ['public-professional-profile', professionalId] });
   };
   const uploadMutation = useMutation({
-    mutationFn: () => uploadOwnProfessionalAvatar(pending[0]!),
-    onSuccess: async () => { setPending([]); await refresh(); },
+    mutationFn: () => uploadOwnProfessionalAvatar(pending[0]!, profile?.avatarPath ?? null),
+    onSuccess: async () => { setPending([]); setSuccess(true); await refresh(); },
   });
   const removeMutation = useMutation({ mutationFn: removeOwnProfessionalAvatar, onSuccess: refresh });
 
   if (!profile || !professionalId) return <Screen title="Foto de perfil"><ErrorState message="No encontramos tu perfil profesional." /></Screen>;
   return <Screen subtitle="Usá una foto clara y actual. Se mostrará a los clientes." title="Foto de perfil">
     <Card>
-      <View style={styles.avatarPreview}><Avatar name={`${profile.firstName} ${profile.lastName}`} size={104} uri={publicProfileQuery.data?.avatarUrl ?? null} /></View>
+      <View style={styles.avatarPreview}><Avatar name={`${profile.firstName} ${profile.lastName}`} size={104} uri={avatarQuery.data ?? publicProfileQuery.data?.avatarUrl ?? null} /></View>
       <AttachmentPicker existingCount={0} maxAttachments={1} onChange={setPending} value={pending} />
-      {uploadMutation.error ? <ErrorState message="No pudimos guardar la foto." /> : null}
+      {uploadMutation.error ? <ErrorState message={uploadMutation.error instanceof Error ? uploadMutation.error.message : 'No pudimos guardar la foto.'} /> : null}
+      {success ? <Text style={styles.success}>Foto actualizada</Text> : null}
       <Button disabled={pending.length !== 1 || uploadMutation.isPending} onPress={() => uploadMutation.mutate()}>{uploadMutation.isPending ? 'Guardando...' : profile.avatarPath ? 'Reemplazar foto' : 'Guardar foto'}</Button>
       {profile.avatarPath ? <Button disabled={removeMutation.isPending} onPress={() => Alert.alert('Eliminar foto', 'Se volverán a mostrar tus iniciales.', [{ style: 'cancel', text: 'Cancelar' }, { style: 'destructive', text: 'Eliminar', onPress: () => removeMutation.mutate() }])} variant="danger">Eliminar foto</Button> : null}
     </Card>
@@ -87,7 +93,7 @@ export function ProfessionalPortfolioScreen() {
     },
     onSuccess: async () => { setCreating(false); setTitle(''); setDescription(''); setCategoryId(null); setPending([]); await refresh(); },
   });
-  const updateMutation = useMutation({ mutationFn: ({ id, patch }: { id: string; patch: { isVisible?: boolean; sortOrder?: number } }) => updatePortfolioItem(id, patch), onSuccess: refresh });
+  const updateMutation = useMutation({ mutationFn: ({ id, patch }: { id: string; patch: { description?: string; isVisible?: boolean; sortOrder?: number; title?: string } }) => updatePortfolioItem(id, patch), onSuccess: refresh });
   const reorderMutation = useMutation({
     mutationFn: (changes: Array<{ id: string; sortOrder: number }>) => Promise.all(changes.map((change) => updatePortfolioItem(change.id, { sortOrder: change.sortOrder }))),
     onSuccess: refresh,
@@ -98,6 +104,8 @@ export function ProfessionalPortfolioScreen() {
 
   return <Screen subtitle="Mostrá ejemplos reales de tu trabajo. Hasta 12 publicaciones." title="Portfolio">
     {items.map((item, index) => <EditablePortfolioItem
+      canMoveDown={index < items.length - 1}
+      canMoveUp={index > 0}
       item={item}
       key={item.id}
       onDelete={() => Alert.alert('Eliminar trabajo', 'También se eliminarán sus fotos.', [{ style: 'cancel', text: 'Cancelar' }, { style: 'destructive', text: 'Eliminar', onPress: () => deleteMutation.mutate(item.id) }])}
@@ -108,6 +116,7 @@ export function ProfessionalPortfolioScreen() {
         reorderMutation.mutate([{ id: item.id, sortOrder: targetIndex }, { id: neighbor.id, sortOrder: index }]);
       }}
       onToggle={() => updateMutation.mutate({ id: item.id, patch: { isVisible: !item.isVisible } })}
+      onUpdate={(patch) => updateMutation.mutate({ id: item.id, patch })}
     />)}
     {items.length === 0 ? <Text style={styles.help}>Todavía no agregaste trabajos al portfolio.</Text> : null}
     {!creating && items.length < 12 ? <Button onPress={() => setCreating(true)}>Agregar trabajo</Button> : null}
@@ -124,18 +133,23 @@ export function ProfessionalPortfolioScreen() {
   </Screen>;
 }
 
-function EditablePortfolioItem({ item, onDelete, onMove, onToggle }: { item: ProfessionalPortfolioItem; onDelete: () => void; onMove: (offset: number) => void; onToggle: () => void }) {
+function EditablePortfolioItem({ canMoveDown, canMoveUp, item, onDelete, onMove, onToggle, onUpdate }: { canMoveDown: boolean; canMoveUp: boolean; item: ProfessionalPortfolioItem; onDelete: () => void; onMove: (offset: number) => void; onToggle: () => void; onUpdate: (patch: { description: string; title: string }) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(item.title);
+  const [draftDescription, setDraftDescription] = useState(item.description);
   const query = useQuery({ queryFn: () => listAttachments({ portfolioItemId: item.id }, 'portfolio'), queryKey: ['attachments', 'portfolio', item.id] });
   return <Card>
-    <Text style={styles.title}>{item.title}</Text><Text style={styles.help}>{item.description}</Text>
     {query.data ? <AttachmentGallery attachments={query.data} onDelete={(attachment) => Alert.alert('Eliminar foto', 'La foto dejará de mostrarse.', [{ style: 'cancel', text: 'Cancelar' }, { style: 'destructive', text: 'Eliminar', onPress: () => void deleteAttachment(attachment.id).then(() => query.refetch()) }])} /> : null}
-    <Text style={styles.help}>{item.isVisible ? 'Visible para clientes' : 'Oculto'}</Text>
-    <View style={styles.actions}><Button onPress={() => onMove(-1)} variant="ghost">Subir</Button><Button onPress={() => onMove(1)} variant="ghost">Bajar</Button></View>
-    <Button onPress={onToggle} variant="secondary">{item.isVisible ? 'Ocultar' : 'Mostrar'}</Button><Button onPress={onDelete} variant="danger">Eliminar trabajo</Button>
+    {editing ? <View><TextInput onChangeText={setDraftTitle} value={draftTitle} /><TextInput multiline onChangeText={setDraftDescription} value={draftDescription} /><Button onPress={() => { onUpdate({ description: draftDescription, title: draftTitle }); setEditing(false); }}>Guardar</Button></View> : <><Text style={styles.title}>{item.title}</Text><Text style={styles.help}>{item.description}</Text></>}
+    <Text style={styles.help}>Categoría: {item.categoryName ?? 'Sin categoría'}</Text>
+    <Text style={styles.help}>Estado: {item.isVisible ? 'Visible para clientes' : 'Oculto'}</Text>
+    <View style={styles.orderBlock}><Text style={styles.label}>Orden de aparición</Text><View style={styles.orderActions}><Button disabled={!canMoveUp} onPress={() => onMove(-1)} variant="secondary"><Ionicons color={colors.text} name="chevron-up" size={20} /></Button><Button disabled={!canMoveDown} onPress={() => onMove(1)} variant="secondary"><Ionicons color={colors.text} name="chevron-down" size={20} /></Button></View></View>
+    <View style={styles.actions}><Button onPress={() => setEditing(true)} variant="ghost">Editar</Button><Button onPress={onToggle} variant="secondary">{item.isVisible ? 'Ocultar' : 'Mostrar'}</Button></View>
+    <View style={styles.deleteSection}><Button onPress={onDelete} variant="ghost">Eliminar trabajo</Button></View>
   </Card>;
 }
 
 const styles = StyleSheet.create({
-  actions: { flexDirection: 'row', gap: 8 }, avatarPreview: { alignItems: 'center' }, categories: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  help: { color: colors.muted, fontSize: 14, lineHeight: 20 }, label: { color: colors.text, fontSize: 14, fontWeight: '700' }, title: { color: colors.text, fontSize: 18, fontWeight: '800' },
+  actions: { flexDirection: 'row', gap: 8 }, avatarPreview: { alignItems: 'center' }, categories: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 }, deleteSection: { borderTopColor: colors.border, borderTopWidth: 1, marginTop: 4, paddingTop: 8 }, orderActions: { flexDirection: 'row', gap: 8 }, orderBlock: { backgroundColor: colors.surfaceStrong, borderRadius: 14, gap: 8, padding: 12 },
+  help: { color: colors.muted, fontSize: 14, lineHeight: 20 }, label: { color: colors.text, fontSize: 14, fontWeight: '700' }, success: { color: colors.success, fontWeight: '700' }, title: { color: colors.text, fontSize: 18, fontWeight: '800' },
 });

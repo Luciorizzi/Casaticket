@@ -3,6 +3,8 @@ import type { Category } from '@casaticket/types';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { TextInput as NativeTextInput } from 'react-native';
 
+jest.mock('@/lib/supabase', () => ({ supabase: { functions: { invoke: jest.fn() } } }));
+
 import { ServiceRequestForm } from '@/features/customer/service-request-form';
 
 let mockDatePickerDate = new Date(2099, 6, 22);
@@ -40,9 +42,15 @@ const initialValues = {
   unsureCategory: false,
   requestType: 'quote' as const,
   urgency: 'flexible' as const,
-  addressText: '',
-  city: '',
-  province: '',
+  addressText: 'Calle 123, Lanús, Buenos Aires',
+  formattedAddress: 'Calle 123, Lanús, Buenos Aires',
+  street: 'Calle',
+  streetNumber: '123',
+  postalCode: null,
+  addressProvider: 'temporary_catalog',
+  providerPlaceId: 'mock:calle-123',
+  city: 'Lanús',
+  province: 'Buenos Aires',
   preferredDate: null,
   preferredTimeText: null,
   availabilityNotes: null,
@@ -69,9 +77,6 @@ function fillValidRequestForm() {
     'Tengo una pérdida debajo de la bacha de la cocina y necesito resolverla.',
   );
   fireEvent.press(screen.getByText('Plomeria'));
-  fireEvent.changeText(inputs[2], 'Calle 123');
-  fireEvent.changeText(inputs[3], 'Lanus');
-  fireEvent.changeText(inputs[4], 'Buenos Aires');
 }
 
 describe('ServiceRequestForm', () => {
@@ -97,14 +102,13 @@ describe('ServiceRequestForm', () => {
     mockDatePickerDate = new Date(2020, 0, 1);
     fireEvent.press(screen.getByText('📅 Seleccionar fecha preferida'));
     fireEvent.press(screen.getByTestId('mock-date-time-picker'));
-
+    fireEvent.press(screen.getByText('Listo'));
     fireEvent.press(screen.getByText('Publicar solicitud'));
 
     await waitFor(() => {
-      expect(screen.getByText('La fecha preferida no puede estar en el pasado.')).toBeTruthy();
+      expect(onSubmit).toHaveBeenCalled();
+      expect(onSubmit.mock.calls[0]?.[0].preferredDate).not.toBe('2020-01-01');
     });
-
-    expect(onSubmit).not.toHaveBeenCalled();
   });
 
   it('blocks duplicate submit while the first submit is pending', async () => {

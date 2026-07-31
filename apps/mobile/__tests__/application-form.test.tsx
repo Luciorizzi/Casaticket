@@ -16,18 +16,21 @@ function fillValidDiagnosticVisitForm() {
     inputs[0],
     'Puedo revisar el problema esta semana y llevar las herramientas necesarias.',
   );
-  fireEvent.changeText(inputs[1], 'Martes o jueves por la tarde.');
-  fireEvent.changeText(inputs[2], '5000');
+  fireEvent.changeText(inputs[1], '5000');
 }
 
 describe('ApplicationForm', () => {
+  it('does not render the removed availability field', () => {
+    renderForm();
+    expect(screen.queryByText('Disponibilidad')).toBeNull();
+  });
   it('prevents submit and shows validation errors when required fields are missing', async () => {
     const onSubmit = renderForm();
 
     fireEvent.press(screen.getByText('Enviar postulación'));
 
     await waitFor(() => {
-      expect(screen.getByText('El mensaje es obligatorio.')).toBeTruthy();
+      expect(screen.getByText('El mensaje de presentación es obligatorio.')).toBeTruthy();
     });
 
     expect(onSubmit).not.toHaveBeenCalled();
@@ -40,12 +43,11 @@ describe('ApplicationForm', () => {
       inputs[0],
       'Puedo revisar el problema esta semana y llevar las herramientas necesarias.',
     );
-    fireEvent.changeText(inputs[1], 'Martes o jueves por la tarde.');
 
     fireEvent.press(screen.getByText('Enviar postulación'));
 
     await waitFor(() => {
-      expect(screen.getByText('Indicá el precio de la visita diagnóstica.')).toBeTruthy();
+      expect(screen.getByText('Indicá un precio de visita mayor a cero.')).toBeTruthy();
     });
 
     expect(onSubmit).not.toHaveBeenCalled();
@@ -58,8 +60,7 @@ describe('ApplicationForm', () => {
       inputs[0],
       'Puedo revisar el problema esta semana y llevar las herramientas necesarias.',
     );
-    fireEvent.changeText(inputs[1], 'Martes o jueves por la tarde.');
-    fireEvent.changeText(inputs[2], '-1');
+    fireEvent.changeText(inputs[1], '-1');
 
     fireEvent.press(screen.getByText('Enviar postulación'));
 

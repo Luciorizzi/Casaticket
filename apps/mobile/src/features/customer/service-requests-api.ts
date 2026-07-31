@@ -1,5 +1,6 @@
 import type {
   Category,
+  CustomerPendingAction,
   CustomerRequestApplication,
   CustomerSelectionResult,
   ServiceRequestWithCategory,
@@ -28,6 +29,12 @@ interface ServiceRequestRow {
   request_type: ServiceRequestWithCategory['requestType'];
   urgency: ServiceRequestWithCategory['urgency'];
   address_text: string;
+  formatted_address?: string | null;
+  street?: string | null;
+  street_number?: string | null;
+  postal_code?: string | null;
+  address_provider?: string | null;
+  provider_place_id?: string | null;
   city: string;
   province: string;
   preferred_date: string | null;
@@ -219,6 +226,12 @@ export async function createServiceRequest(
     request_type: input.requestType,
     urgency: input.urgency,
     address_text: input.addressText,
+    formatted_address: input.formattedAddress,
+    street: input.street,
+    street_number: input.streetNumber,
+    postal_code: input.postalCode,
+    address_provider: input.addressProvider,
+    provider_place_id: input.providerPlaceId,
     city: input.city,
     province: input.province,
     preferred_date: input.preferredDate,
@@ -253,7 +266,45 @@ export async function listOwnServiceRequests(): Promise<ServiceRequestWithCatego
     throw error;
   }
 
-  return (data ?? []).map((row) => mapServiceRequest(row as ServiceRequestRow));
+  const requests = (data ?? []).map((row) => mapServiceRequest(row as ServiceRequestRow));
+  if (requests.length === 0) return requests;
+  const [{ data: jobs, error: jobsError }, { data: actions, error: actionsError }] = await Promise.all([
+    supabase.from('jobs').select('request_id,status,updated_at').in('request_id', requests.map((request) => request.id)),
+    supabase.rpc('list_customer_pending_actions'),
+  ]);
+  if (jobsError) {
+    logDevelopmentSupabaseError('service-requests:list-lifecycle', jobsError);
+    throw jobsError;
+  }
+  if (actionsError) {
+    logDevelopmentSupabaseError('service-requests:list-pending-actions', actionsError);
+    throw actionsError;
+  }
+  const jobsByRequest = new Map((jobs ?? []).map((job) => [job.request_id as string, job]));
+  const actionsByRequest = new Map(((actions ?? []) as PendingActionRow[]).map((row) => [row.request_id, mapPendingAction(row)]));
+  return requests.map((request) => {
+    const job = jobsByRequest.get(request.id);
+    return { ...request, ...(job ? { jobStatus: job.status, lifecycleUpdatedAt: job.updated_at } : {}), pendingCustomerAction: actionsByRequest.get(request.id) ?? null };
+  });
+}
+
+interface PendingActionRow {
+  request_id: string;
+  action_type: CustomerPendingAction['type'];
+  action_label: string;
+  cta_label: string;
+  action_priority: number;
+  occurred_at: string;
+  application_id: string | null;
+  job_id: string | null;
+}
+
+function mapPendingAction(row: PendingActionRow): CustomerPendingAction {
+  return {
+    type: row.action_type, label: row.action_label, ctaLabel: row.cta_label,
+    priority: row.action_priority, occurredAt: row.occurred_at,
+    applicationId: row.application_id, jobId: row.job_id,
+  };
 }
 
 export async function getOwnServiceRequest(requestId: string): Promise<ServiceRequestWithCategory> {
@@ -268,7 +319,11 @@ export async function getOwnServiceRequest(requestId: string): Promise<ServiceRe
     throw error;
   }
 
-  return mapServiceRequest(data as ServiceRequestRow);
+  const request = mapServiceRequest(data as ServiceRequestRow);
+  const { data: actions, error: actionsError } = await supabase.rpc('list_customer_pending_actions');
+  if (actionsError) throw actionsError;
+  const row = ((actions ?? []) as PendingActionRow[]).find((action) => action.request_id === requestId);
+  return { ...request, pendingCustomerAction: row ? mapPendingAction(row) : null };
 }
 
 export async function cancelOwnServiceRequest(requestId: string): Promise<ServiceRequestWithCategory> {

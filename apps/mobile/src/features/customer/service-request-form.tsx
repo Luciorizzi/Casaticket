@@ -15,6 +15,8 @@ import { FormField } from '@/components/ui/form-field';
 import { TextInput } from '@/components/ui/text-input';
 import { colors } from '@/components/ui/theme';
 import { DatePickerField } from '@/features/jobs/date-picker-field';
+import { AddressAutocompleteField } from './address-autocomplete-field';
+import { googlePlacesAddressProvider } from './address-autocomplete-provider';
 import { AttachmentPicker } from '@/features/attachments/components';
 import type { PendingAttachment } from '@/features/attachments/api';
 
@@ -92,6 +94,7 @@ export function ServiceRequestForm({
   const saving = loading || isSubmitting;
   const selectedCategoryId = watch('categoryId');
   const unsureCategory = watch('unsureCategory');
+  const selectedAddressId = watch('providerPlaceId');
 
   return (
     <Card>
@@ -208,9 +211,30 @@ export function ServiceRequestForm({
       <Controller
         control={control}
         name="addressText"
-        render={({ field: { onBlur, onChange, value } }) => (
-          <FormField error={errors.addressText?.message} label="Dirección">
-            <TextInput onBlur={onBlur} onChangeText={onChange} value={value} />
+        render={({ field: { onChange, value } }) => (
+          <FormField error={errors.addressText?.message ?? errors.providerPlaceId?.message} label="Dirección">
+            <AddressAutocompleteField
+              onChangeText={(text) => {
+                onChange(text);
+                setValue('providerPlaceId', '', { shouldDirty: true, shouldValidate: true });
+                setValue('formattedAddress', '', { shouldDirty: true });
+              }}
+              context={{ city: watch('city'), province: watch('province') }}
+              onSelect={(address) => {
+                onChange(address.formattedAddress);
+                setValue('formattedAddress', address.formattedAddress, { shouldDirty: true, shouldValidate: true });
+                setValue('street', address.street ?? '', { shouldDirty: true });
+                setValue('streetNumber', address.streetNumber ?? '', { shouldDirty: true });
+                setValue('city', address.city, { shouldDirty: true, shouldValidate: true });
+                setValue('province', address.province, { shouldDirty: true, shouldValidate: true });
+                setValue('postalCode', address.postalCode, { shouldDirty: true });
+                setValue('addressProvider', googlePlacesAddressProvider.id, { shouldDirty: true });
+                setValue('providerPlaceId', address.providerPlaceId, { shouldDirty: true, shouldValidate: true });
+              }}
+              provider={googlePlacesAddressProvider}
+              selected={selectedAddressId.length > 0}
+              value={value}
+            />
           </FormField>
         )}
       />
@@ -219,7 +243,7 @@ export function ServiceRequestForm({
         name="city"
         render={({ field: { onBlur, onChange, value } }) => (
           <FormField error={errors.city?.message} label="Ciudad">
-            <TextInput onBlur={onBlur} onChangeText={onChange} value={value} />
+            <TextInput editable={false} onBlur={onBlur} onChangeText={onChange} value={value} />
           </FormField>
         )}
       />
@@ -228,7 +252,7 @@ export function ServiceRequestForm({
         name="province"
         render={({ field: { onBlur, onChange, value } }) => (
           <FormField error={errors.province?.message} label="Provincia">
-            <TextInput onBlur={onBlur} onChangeText={onChange} value={value} />
+            <TextInput editable={false} onBlur={onBlur} onChangeText={onChange} value={value} />
           </FormField>
         )}
       />

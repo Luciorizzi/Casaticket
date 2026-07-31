@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 import { router, type Href, useRouter } from 'expo-router';
-import { Alert, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 
 import {
   getProfileDisplayName,
@@ -58,6 +58,7 @@ import { uploadAttachments, type PendingAttachment } from '@/features/attachment
 import { CustomerProfileHubScreen } from '@/features/customer/customer-profile-screens';
 import { NotificationBell } from '@/features/notifications/notification-access';
 import { PublicProfessionalProfileScreen } from '@/features/professional/public-profile-screen';
+import { getPublicProfessionalProfile } from '@/features/professional/public-profile-api';
 
 export function CustomerOnboardingScreen() {
   return (
@@ -159,6 +160,12 @@ export function CustomerCreateRequestScreen() {
       requestType: 'quote',
       urgency: 'flexible',
       addressText: '',
+      formattedAddress: '',
+      street: '',
+      streetNumber: '',
+      postalCode: null,
+      addressProvider: '',
+      providerPlaceId: '',
       city: profile?.city ?? '',
       province: profile?.province ?? '',
       preferredDate: null,
@@ -217,6 +224,7 @@ export function CustomerCreateRequestScreen() {
 }
 
 export function CustomerRequestsScreen() {
+  const [section, setSection] = useState<'active' | 'completed' | 'cancelled'>('active');
   const { sessionState } = useAuthSession();
   const requestsQuery = useQuery({
     queryKey:
@@ -246,25 +254,29 @@ export function CustomerRequestsScreen() {
     );
   }
 
-  const requests = requestsQuery.data ?? [];
+  const requests = (requestsQuery.data ?? [])
+    .filter((request) => getRequestSection(request) === section)
+    .sort((left, right) => compareCustomerRequests(left, right, section));
+  const emptyCopy = section === 'active' ? 'No tenés solicitudes activas.' : section === 'completed' ? 'Todavía no finalizaste ninguna solicitud.' : 'No tenés solicitudes canceladas.';
 
   return (
     <Screen
-      subtitle="Tus publicaciones aparecen ordenadas de más reciente a más antigua."
+      refreshControl={<RefreshControl onRefresh={() => void requestsQuery.refetch()} refreshing={requestsQuery.isRefetching} />}
+      subtitle="Seguimiento de tus solicitudes por estado."
       title="Mis solicitudes"
     >
+      <View style={styles.requestTabs}>
+        {([['active', 'Activas'], ['completed', 'Finalizadas'], ['cancelled', 'Canceladas']] as const).map(([value, label]) => <Pressable accessibilityRole="tab" key={value} onPress={() => setSection(value)} style={[styles.requestTab, section === value ? styles.requestTabSelected : null]}><Text style={section === value ? styles.requestTabTextSelected : styles.requestTabText}>{label}</Text></Pressable>)}
+        <Pressable accessibilityLabel="Actualizar solicitudes" accessibilityRole="button" hitSlop={4} onPress={() => void requestsQuery.refetch()} style={styles.refreshButton}><Text style={styles.refreshText}>{requestsQuery.isRefetching ? '…' : '↻'}</Text></Pressable>
+      </View>
       {requests.length === 0 ? (
         <EmptyState
-          actionLabel="Crear solicitud"
-          description="Todavía no publicaste solicitudes. Podés crear la primera ahora."
-          onAction={() => router.push('/(customer)/create-request')}
-          title="Sin solicitudes todavía"
+          {...(section === 'active' ? { actionLabel: 'Crear solicitud', onAction: () => router.push('/(customer)/create-request') } : {})}
+          description={emptyCopy}
+          title="Sin solicitudes"
         />
       ) : (
         <>
-          <Button onPress={() => void requestsQuery.refetch()} variant="secondary">
-            Actualizar listado
-          </Button>
           {requests.map((request) => (
             <ServiceRequestListItem key={request.id} request={request} />
           ))}
@@ -416,6 +428,14 @@ export function CustomerRequestDetailScreen({ requestId }: { requestId: string }
 
   return (
     <Screen subtitle="Detalle de la solicitud publicada." title={request.title}>
+      {request.pendingCustomerAction ? (
+        <Card>
+          <Text style={styles.pendingEyebrow}>ACCIÓN PENDIENTE</Text>
+          <Text style={styles.requestTitle}>{request.pendingCustomerAction.label}</Text>
+          <Text style={styles.requestMeta}>Esta solicitud necesita una respuesta tuya.</Text>
+          <Button onPress={() => navigateToPendingAction(request)}>{request.pendingCustomerAction.ctaLabel}</Button>
+        </Card>
+      ) : null}
       <ServiceRequestDetailCard applications={applications} request={request} />
       {cancelMutation.error ? (
         <ErrorState message="No pudimos cancelar la solicitud." title="Cancelación fallida" />
@@ -725,6 +745,39 @@ export function CustomerApplicationDetailScreen({
   />;
 }
 
+export function getRequestSection(request: ServiceRequestWithCategory): 'active' | 'completed' | 'cancelled' {
+  if (request.status === 'cancelled' || request.jobStatus === 'cancelled') return 'cancelled';
+  if (request.jobStatus === 'completed') return 'completed';
+  return 'active';
+}
+
+function getRequestSortDate(request: ServiceRequestWithCategory, section: 'active' | 'completed' | 'cancelled') {
+  return section === 'active' ? request.publishedAt ?? request.createdAt : request.lifecycleUpdatedAt ?? request.updatedAt;
+}
+
+export function compareCustomerRequests(left: ServiceRequestWithCategory, right: ServiceRequestWithCategory, section: 'active' | 'completed' | 'cancelled') {
+  if (section === 'active') {
+    const priorityDifference = (right.pendingCustomerAction?.priority ?? 0) - (left.pendingCustomerAction?.priority ?? 0);
+    if (priorityDifference !== 0) return priorityDifference;
+    const actionDateDifference = (right.pendingCustomerAction?.occurredAt ?? '').localeCompare(left.pendingCustomerAction?.occurredAt ?? '');
+    if (actionDateDifference !== 0) return actionDateDifference;
+  }
+  return getRequestSortDate(right, section).localeCompare(getRequestSortDate(left, section));
+}
+
+function navigateToPendingAction(request: ServiceRequestWithCategory) {
+  const action = request.pendingCustomerAction;
+  if (!action) return router.push(`/(customer)/requests/${request.id}` as Href);
+  if (action.type === 'application' && action.applicationId) {
+    return router.push({ pathname: '/(customer)/requests/[id]/applications/[applicationId]', params: { id: request.id, applicationId: action.applicationId } } as Href);
+  }
+  if (action.type === 'visit' && action.jobId) {
+    return router.push({ pathname: '/(customer)/jobs/[jobId]/visit', params: { jobId: action.jobId } } as Href);
+  }
+  if (action.jobId) return router.push({ pathname: '/(customer)/jobs/[jobId]', params: { jobId: action.jobId } } as Href);
+  return router.push(`/(customer)/requests/${request.id}` as Href);
+}
+
 export function CustomerProfileScreen() {
   return <CustomerProfileHubScreen />;
 }
@@ -840,6 +893,7 @@ function CustomerProfileEditorScreen({
 
 function ServiceRequestListItem({ request }: { request: ServiceRequestWithCategory }) {
   return (
+    <View style={request.pendingCustomerAction ? styles.pendingRequestCard : null}>
     <Pressable onPress={() => router.push(`/(customer)/requests/${request.id}` as Href)}>
       <SummaryCard
         icon="🏠"
@@ -848,6 +902,8 @@ function ServiceRequestListItem({ request }: { request: ServiceRequestWithCatego
         value={request.title}
       />
     </Pressable>
+    {request.pendingCustomerAction ? <View style={styles.pendingAction}><Text style={styles.pendingEyebrow}>PRIORIDAD</Text><Text style={styles.pendingLabel}>{request.pendingCustomerAction.label}</Text><Button onPress={() => navigateToPendingAction(request)} variant="secondary">{request.pendingCustomerAction.ctaLabel}</Button></View> : null}
+    </View>
   );
 }
 
@@ -956,6 +1012,11 @@ function CustomerApplicationCard({
   onOpen: () => void;
   onOpenChat: () => void;
 }) {
+  const professionalProfileQuery = useQuery({
+    queryFn: () => getPublicProfessionalProfile(application.professionalId),
+    queryKey: ['public-professional-profile', application.professionalId],
+  });
+  const professionalName = getProfessionalDisplayName(application);
   return (
     <View style={styles.applicationCard}>
       <Pressable
@@ -964,8 +1025,9 @@ function CustomerApplicationCard({
         onPress={onOpen}
         style={styles.applicationHeader}
       >
+        <Avatar name={professionalName} size={52} uri={professionalProfileQuery.data?.avatarUrl ?? null} />
         <View style={styles.copy}>
-          <Text style={styles.requestTitle}>{getProfessionalDisplayName(application)}</Text>
+          <Text style={styles.requestTitle}>{professionalName}</Text>
           {application.unreadCount > 0 ? (
             <Text style={styles.unreadText}>{application.unreadCount} mensajes sin leer</Text>
           ) : null}
@@ -1178,6 +1240,17 @@ function formatDateTime(value: string | null): string {
 }
 
 const styles = StyleSheet.create({
+  pendingRequestCard: { borderWidth: 2, borderColor: '#bb5e3c', borderRadius: 18, backgroundColor: '#fff4e8', padding: 4 },
+  pendingAction: { gap: 8, paddingHorizontal: 12, paddingBottom: 12 },
+  pendingEyebrow: { color: '#bb5e3c', fontSize: 12, fontWeight: '800', letterSpacing: 0.6 },
+  pendingLabel: { color: '#1d1811', fontSize: 15, fontWeight: '700' },
+  requestTabs: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  requestTab: { minHeight: 44, justifyContent: 'center', borderRadius: 999, backgroundColor: '#f3eadc', paddingHorizontal: 12 },
+  requestTabSelected: { backgroundColor: '#bb5e3c' },
+  requestTabText: { color: '#675a49', fontSize: 13, fontWeight: '600' },
+  requestTabTextSelected: { color: '#ffffff', fontSize: 13, fontWeight: '700' },
+  refreshButton: { minHeight: 44, minWidth: 44, alignItems: 'center', justifyContent: 'center', marginLeft: 'auto' },
+  refreshText: { color: '#bb5e3c', fontSize: 24 },
   headerAction: { alignItems: 'flex-end' },
   destructiveAction: { marginTop: 12 },
   row: {

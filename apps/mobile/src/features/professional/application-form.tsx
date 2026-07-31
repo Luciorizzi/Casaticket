@@ -1,6 +1,6 @@
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Keyboard, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import type { ApplicationProposalType } from '@casaticket/types';
 import type { CreateApplicationInput } from '@casaticket/validation';
@@ -40,8 +40,11 @@ function parseOptionalPrice(text: string): number | null {
 export function ApplicationForm({ loading = false, onSubmit }: ApplicationFormProps) {
   const {
     control,
+    clearErrors,
     formState: { errors, isSubmitting },
     handleSubmit,
+    setValue,
+    watch,
   } = useForm<CreateApplicationInput>({
     defaultValues: {
       message: '',
@@ -49,11 +52,12 @@ export function ApplicationForm({ loading = false, onSubmit }: ApplicationFormPr
       visitPrice: null,
       estimatedPrice: null,
       estimatedDurationText: null,
-      availabilityText: '',
     },
     resolver: zodResolver(createApplicationSchema),
   });
   const submitting = loading || isSubmitting;
+  const proposalType = watch('proposalType');
+  const showEstimatedPrice = proposalType === 'preliminary_quote' || proposalType === 'direct_service';
 
   return (
     <Card>
@@ -61,12 +65,12 @@ export function ApplicationForm({ loading = false, onSubmit }: ApplicationFormPr
         control={control}
         name="message"
         render={({ field: { onBlur, onChange, value } }) => (
-          <FormField error={errors.message?.message} label="Mensaje para el cliente">
+          <FormField error={errors.message?.message} label="Mensaje de presentación">
             <TextInput
               multiline
               onBlur={onBlur}
               onChangeText={onChange}
-              placeholder="Contá cómo podés ayudar y qué información necesitás."
+              placeholder="Contale brevemente cómo podés ayudar con este trabajo."
               value={value}
             />
           </FormField>
@@ -84,7 +88,13 @@ export function ApplicationForm({ loading = false, onSubmit }: ApplicationFormPr
                 return (
                   <Pressable
                     key={proposalType}
-                    onPress={() => onChange(proposalType)}
+                    onPress={() => {
+                      onChange(proposalType);
+                      if (proposalType !== 'diagnostic_visit') {
+                        setValue('visitPrice', null);
+                        clearErrors('visitPrice');
+                      }
+                    }}
                     style={[styles.choice, selected ? styles.choiceSelected : null]}
                   >
                     <Text style={[styles.choiceLabel, selected ? styles.choiceLabelSelected : null]}>
@@ -97,26 +107,12 @@ export function ApplicationForm({ loading = false, onSubmit }: ApplicationFormPr
           </FormField>
         )}
       />
-      <Controller
-        control={control}
-        name="availabilityText"
-        render={({ field: { onBlur, onChange, value } }) => (
-          <FormField error={errors.availabilityText?.message} label="Disponibilidad">
-            <TextInput
-              multiline
-              onBlur={onBlur}
-              onChangeText={onChange}
-              placeholder="Ejemplo: puedo pasar martes o jueves por la tarde."
-              value={value}
-            />
-          </FormField>
-        )}
-      />
-      <Controller
+      {proposalType === 'diagnostic_visit' ? <Controller
         control={control}
         name="visitPrice"
         render={({ field: { onBlur, onChange, value } }) => (
-          <FormField error={errors.visitPrice?.message} label="Precio de visita opcional">
+          <FormField error={errors.visitPrice?.message} label="Precio de la visita">
+            <Text style={styles.help}>Indicá cuánto deberá pagar el cliente por la visita diagnóstica.</Text>
             <TextInput
               keyboardType="decimal-pad"
               onBlur={onBlur}
@@ -126,8 +122,8 @@ export function ApplicationForm({ loading = false, onSubmit }: ApplicationFormPr
             />
           </FormField>
         )}
-      />
-      <Controller
+      /> : null}
+      {showEstimatedPrice ? <Controller
         control={control}
         name="estimatedPrice"
         render={({ field: { onBlur, onChange, value } }) => (
@@ -141,7 +137,7 @@ export function ApplicationForm({ loading = false, onSubmit }: ApplicationFormPr
             />
           </FormField>
         )}
-      />
+      /> : null}
       <Controller
         control={control}
         name="estimatedDurationText"
@@ -156,7 +152,7 @@ export function ApplicationForm({ loading = false, onSubmit }: ApplicationFormPr
           </FormField>
         )}
       />
-      <Button disabled={submitting} onPress={handleSubmit(onSubmit)}>
+      <Button disabled={submitting} onPress={handleSubmit((values) => { Keyboard.dismiss(); return onSubmit(values); })}>
         {submitting ? 'Enviando...' : 'Enviar postulación'}
       </Button>
     </Card>
@@ -187,4 +183,5 @@ const styles = StyleSheet.create({
   choiceLabelSelected: {
     color: colors.accent,
   },
+  help: { color: colors.muted, fontSize: 13, lineHeight: 18, marginBottom: 8 },
 });

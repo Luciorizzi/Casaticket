@@ -13,6 +13,7 @@ const mockCompleteProfessionalJob = jest.fn();
 const mockCreateJobReview = jest.fn();
 const mockCreateProfessionalJobQuote = jest.fn();
 const mockGetJobPayment = jest.fn();
+const mockGetJobLocation = jest.fn();
 const mockGetProfessionalJobById = jest.fn();
 const mockListJobReviews = jest.fn();
 const mockListJobQuotes = jest.fn();
@@ -50,6 +51,8 @@ jest.mock('@/features/jobs/api', () => ({
   createJobReview: (...args: unknown[]) => mockCreateJobReview(...args),
   createProfessionalJobQuote: (...args: unknown[]) => mockCreateProfessionalJobQuote(...args),
   getJobPayment: (...args: unknown[]) => mockGetJobPayment(...args),
+  getJobLocation: (...args: unknown[]) => mockGetJobLocation(...args),
+  jobLocationQueryKey: (jobId: string) => ['job-location', jobId],
   getProfessionalJobById: (...args: unknown[]) => mockGetProfessionalJobById(...args),
   jobPaymentQueryKey: (jobId: string) => ['job-payment', jobId],
   jobQuotesQueryKey: (jobId: string) => ['job-quotes', jobId],
@@ -199,6 +202,7 @@ describe('professional job detail screen', () => {
     mockCanGoBack.mockReturnValue(true);
     mockGetProfessionalJobById.mockResolvedValue(createJob());
     mockGetJobPayment.mockResolvedValue(null);
+    mockGetJobLocation.mockResolvedValue({ addressText: 'Calle 123', city: 'Lanús', jobId: 'job-1', province: 'Buenos Aires', requestId: 'request-1' });
     mockListJobReviews.mockResolvedValue([]);
     mockListJobQuotes.mockResolvedValue([]);
     mockProposeProfessionalJobVisit.mockResolvedValue(
@@ -307,6 +311,7 @@ describe('professional job detail screen', () => {
   it('stage back deterministically returns to the current job detail', async () => {
     renderWithQueryClient(<ProfessionalJobStageScreen jobId="job-1" stage="visit" />);
     await waitFor(() => expect(screen.getByLabelText('Volver a gestionar trabajo')).toBeTruthy());
+    expect(screen.getByText('Calle 123 · Lanús, Buenos Aires')).toBeTruthy();
     fireEvent.press(screen.getByLabelText('Volver a gestionar trabajo'));
     expect(mockReplace).toHaveBeenCalledWith({
       pathname: '/(professional)/jobs/[jobId]',
@@ -371,14 +376,18 @@ describe('professional job detail screen', () => {
 
     fireEvent.press(screen.getByText('📅 Seleccionar fecha'));
     fireEvent.press(screen.getByTestId('mock-date-time-picker'));
-    fireEvent.changeText(screen.getByPlaceholderText('Horario'), '10 a 12');
+    fireEvent.press(screen.getByText('Listo'));
+    mockDatePickerDate = new Date(2099, 6, 22, 10, 0);
+    fireEvent.press(screen.getByLabelText('Seleccionar horario'));
+    fireEvent.press(screen.getByTestId('mock-date-time-picker'));
+    fireEvent.press(screen.getByText('Listo'));
     fireEvent.changeText(screen.getByPlaceholderText('Notas de coordinación'), 'Tocar timbre.');
     fireEvent.press(screen.getAllByText('Proponer visita').at(-1)!);
 
     await waitFor(() => {
       expect(mockProposeProfessionalJobVisit).toHaveBeenCalledWith('job-1', {
         scheduledDate: '2099-07-22',
-        scheduledTimeText: '10 a 12',
+        scheduledTimeText: '10:00:00',
         schedulingNotes: 'Tocar timbre.',
       });
     });
@@ -402,7 +411,9 @@ describe('professional job detail screen', () => {
 
     fireEvent.press(screen.getByText('📅 Seleccionar fecha'));
     fireEvent.press(screen.getByTestId('mock-date-time-picker'));
-    fireEvent.changeText(screen.getByPlaceholderText('Horario'), '10 a 12');
+    fireEvent.press(screen.getByText('Listo'));
+    fireEvent.press(screen.getByLabelText('Seleccionar horario'));
+    fireEvent.press(screen.getByTestId('mock-date-time-picker'));
     fireEvent.press(screen.getAllByText('Proponer visita').at(-1)!);
 
     expect(screen.getByText('La fecha debe ser futura.')).toBeTruthy();
@@ -578,6 +589,7 @@ describe('professional job detail screen', () => {
     fireEvent.changeText(screen.getByPlaceholderText('Duración estimada'), 'Un día');
     fireEvent.press(screen.getByText('📅 Seleccionar vigencia'));
     fireEvent.press(screen.getByTestId('mock-date-time-picker'));
+    fireEvent.press(screen.getByText('Listo'));
     fireEvent.press(screen.getByText('Guardar borrador'));
 
     await waitFor(() => {

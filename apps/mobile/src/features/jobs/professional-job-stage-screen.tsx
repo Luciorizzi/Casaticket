@@ -12,8 +12,10 @@ import { colors } from '@/components/ui/theme';
 import { AttachmentGallerySection } from '@/features/attachments/components';
 import {
   getJobPayment,
+  getJobLocation,
   getProfessionalJobById,
   jobPaymentQueryKey,
+  jobLocationQueryKey,
   jobQuotesQueryKey,
   listJobQuotes,
   professionalJobQueryKey,
@@ -21,6 +23,7 @@ import {
 import type { ProfessionalJobStage } from '@/features/jobs/professional-job-detail-screen';
 import { goBackToProfessionalJob } from '@/features/jobs/professional-job-navigation';
 import { getMobileJobStatusLabel } from '@/features/jobs/status-labels';
+import { formatLocation } from '@/features/location/location';
 
 const stageTitles: Record<ProfessionalJobStage, string> = {
   completion: 'Finalización', diagnosis: 'Diagnóstico', execution: 'Ejecución', payment: 'Pago protegido',
@@ -58,6 +61,7 @@ export function ProfessionalJobStageScreen({ jobId, stage }: { jobId: string; st
   const jobQuery = useQuery({ enabled: Boolean(jobId), queryFn: () => getProfessionalJobById(jobId), queryKey: professionalJobQueryKey(jobId) });
   const quotesQuery = useQuery({ enabled: Boolean(jobId), queryFn: () => listJobQuotes(jobId), queryKey: jobQuotesQueryKey(jobId) });
   const paymentQuery = useQuery({ enabled: Boolean(jobId), queryFn: () => getJobPayment(jobId), queryKey: jobPaymentQueryKey(jobId) });
+  const locationQuery = useQuery({ enabled: Boolean(jobId), queryFn: () => getJobLocation(jobId), queryKey: jobLocationQueryKey(jobId) });
 
   if (jobQuery.isPending) return <Screen title={stageTitles[stage]}><LoadingState message="Cargando etapa..." /></Screen>;
   if (jobQuery.error || !jobQuery.data) return <Screen title={stageTitles[stage]}><ErrorState message="No pudimos cargar esta etapa." /></Screen>;
@@ -74,7 +78,7 @@ export function ProfessionalJobStageScreen({ jobId, stage }: { jobId: string; st
       </Pressable>
       <Card>
         <View style={styles.stack}>
-          {stage === 'visit' ? <><Detail label="Fecha" value={formatDate(job.scheduledDate, 'Pendiente de definir')} /><Detail label="Horario" value={value(job.scheduledTimeText, 'Pendiente de definir')} /><Detail label="Notas" value={value(job.schedulingNotes, 'Sin observaciones')} /></> : null}
+          {stage === 'visit' ? <><Detail label="Fecha" value={formatDate(job.scheduledDate, 'Pendiente de definir')} /><Detail label="Horario" value={value(job.scheduledTimeText, 'Pendiente de definir')} /><Detail label="Dirección" value={locationQuery.data ? `${locationQuery.data.addressText} · ${formatLocation(locationQuery.data.city, locationQuery.data.province)}` : 'Cargando ubicación...'} /><Detail label="Notas" value={value(job.schedulingNotes, 'Sin observaciones')} /></> : null}
           {stage === 'diagnosis' ? <><Detail label="Diagnóstico" value={value(job.diagnosisText)} /><Detail label="Trabajo recomendado" value={value(job.recommendedWorkText)} /><Detail label="Materiales" value={value(job.materialsNotes)} /></> : null}
           {stage === 'quote' ? (quotes.length ? quotes.map((quote) => <Detail key={quote.id} label={`Versión ${quote.version} · ${getJobQuoteStatusLabel(quote.status)}`} value={formatMoney(quote.totalAmount, quote.currency)} />) : <Detail label="Presupuesto" value="Todavía no generado" />) : null}
           {stage === 'payment' ? <Detail label="Estado" value={payment ? getPaymentStatusLabel(payment.status) : 'Todavía sin pago'} /> : null}

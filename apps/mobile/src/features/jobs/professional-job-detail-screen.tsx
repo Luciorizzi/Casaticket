@@ -40,7 +40,7 @@ import {
   sendProfessionalJobQuote,
   startProfessionalJob,
 } from '@/features/jobs/api';
-import { DatePickerField } from '@/features/jobs/date-picker-field';
+import { DatePickerField, TimePickerField } from '@/features/jobs/date-picker-field';
 import { getMobileJobStatusLabel } from '@/features/jobs/status-labels';
 import { goBackToProfessionalJobs } from '@/features/jobs/professional-job-navigation';
 import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
@@ -830,7 +830,7 @@ function ProposeVisitForm({
           value={scheduledDate || null}
         />
         <Text style={styles.label}>Horario</Text>
-        <TextInput onChangeText={setScheduledTimeText} placeholder="Horario" value={scheduledTimeText} />
+        <TimePickerField onChange={setScheduledTimeText} value={scheduledTimeText || null} />
         <Text style={styles.label}>Notas opcionales</Text>
         <TextInput
           multiline

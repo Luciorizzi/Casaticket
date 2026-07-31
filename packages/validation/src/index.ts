@@ -98,7 +98,11 @@ export const customerOnboardingSchema = profileSchema.extend({
 export const professionalOnboardingSchema = profileSchema.merge(professionalProfileSchema);
 
 function todayDateString(): string {
-  return new Date().toISOString().slice(0, 10);
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = String(today.getMonth() + 1).padStart(2, '0');
+  const day = String(today.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 }
 
 const optionalDateString = z.preprocess(
@@ -136,6 +140,12 @@ export const createServiceRequestSchema = z
     addressText: requiredText('La dirección', 5, 200),
     city: requiredText('La ciudad'),
     province: requiredText('La provincia'),
+    formattedAddress: requiredText('La dirección seleccionada', 5, 300),
+    street: requiredText('La calle', 2, 160),
+    streetNumber: requiredText('La altura', 1, 24),
+    postalCode: z.string().trim().max(20).nullable(),
+    addressProvider: requiredText('El proveedor de dirección', 2, 80),
+    providerPlaceId: requiredText('La dirección seleccionada', 2, 200),
     preferredDate: optionalDateString,
     preferredTimeText: optionalShortText(120, 'El horario o disponibilidad es demasiado largo.'),
     availabilityNotes: optionalShortText(300, 'Las notas de disponibilidad son demasiado largas.'),
@@ -163,20 +173,19 @@ const optionalNonNegativeNumber = z.preprocess(
 
 export const createApplicationSchema = z
   .object({
-    message: requiredText('El mensaje', 20, 1000),
+    message: requiredText('El mensaje de presentación', 20, 2000),
     proposalType: z.enum(APPLICATION_PROPOSAL_TYPES, {
       errorMap: () => ({ message: 'Elegí un tipo de propuesta válido.' }),
     }),
     visitPrice: optionalNonNegativeNumber,
     estimatedPrice: optionalNonNegativeNumber,
     estimatedDurationText: optionalShortText(120, 'La duración estimada es demasiado larga.'),
-    availabilityText: requiredText('La disponibilidad', 2, 300),
   })
   .superRefine((values, context) => {
-    if (values.proposalType === 'diagnostic_visit' && values.visitPrice === null) {
+    if (values.proposalType === 'diagnostic_visit' && (values.visitPrice === null || values.visitPrice <= 0)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: 'Indicá el precio de la visita diagnóstica.',
+        message: 'Indicá un precio de visita mayor a cero.',
         path: ['visitPrice'],
       });
     }

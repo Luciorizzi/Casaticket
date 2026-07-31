@@ -31,11 +31,12 @@ const styles = StyleSheet.create({
     backgroundColor: colors.accentSoft,
     borderWidth: 1,
     borderColor: colors.border,
+    overflow: 'hidden',
   },
   initials: {
     fontSize: 18,
     fontWeight: '700',
     color: colors.accent,
   },
-  image: { height: '100%', width: '100%' },
+  image: { borderRadius: 999, height: '100%', resizeMode: 'cover', width: '100%' },
 });

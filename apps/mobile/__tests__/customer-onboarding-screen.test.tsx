@@ -1,6 +1,8 @@
 import type { Profile } from '@casaticket/types';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+
+jest.mock('@/lib/supabase', () => ({ supabase: { functions: { invoke: jest.fn() } } }));
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { TextInput as NativeTextInput } from 'react-native';
 

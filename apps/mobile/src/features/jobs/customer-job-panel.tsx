@@ -32,8 +32,10 @@ import {
   disputeCustomerJobCompletion,
   getCustomerJobById,
   getCustomerJobByRequest,
+  getJobLocation,
   getJobPayment,
   jobPaymentQueryKey,
+  jobLocationQueryKey,
   jobQuotesQueryKey,
   jobReviewsQueryKey,
   listJobReviews,
@@ -45,6 +47,7 @@ import {
 } from '@/features/jobs/api';
 import { getUserFacingErrorMessage, logDevelopmentSupabaseError } from '@/lib/errors';
 import { AttachmentGallerySection } from '@/features/attachments/components';
+import { formatLocation } from '@/features/location/location';
 
 function formatMoney(value: number): string {
   return new Intl.NumberFormat('es-AR', {
@@ -133,6 +136,7 @@ function formatDateShort(value: string | null): string {
 }
 
 function getVisitSubtitle(job: Job): string {
+  if (job.status === 'visit_proposed') return 'Pendiente de tu confirmación';
   const status = job.status === 'visit_confirmed' || job.status === 'diagnosis_pending' ? 'Confirmada' : 'Pendiente';
   return `${formatDateShort(job.scheduledDate)} · ${job.scheduledTimeText ?? 'Sin horario'} · ${status}`;
 }
@@ -205,11 +209,13 @@ function getFinalizationSubtitle(job: Job): string {
 function createCustomerProgressRows({
   job,
   onPress,
+  onOpenVisit,
   payment,
   quote,
 }: {
   job: Job;
   onPress?: () => void;
+  onOpenVisit?: () => void;
   payment: JobPayment | null;
   quote: JobQuote | null;
 }): JobProgressRowItem[] {
@@ -223,7 +229,7 @@ function createCustomerProgressRows({
     },
     {
       id: 'visit',
-      onPress,
+      onPress: onOpenVisit ?? onPress,
       state: getProgressRowState('visit', job.status),
       subtitle: getVisitSubtitle(job),
       title: 'Visita',
@@ -311,21 +317,51 @@ export function CustomerJobSummaryPanel({ requestId }: { requestId: string }) {
   const openJobProgress = () => {
     router.push({
       pathname: '/(customer)/jobs/[jobId]',
-      params: { jobId: job.id },
+      params: { jobId: job.id, requestId },
     } as Href);
   };
+  const openVisit = () => router.push({ pathname: '/(customer)/jobs/[jobId]/visit', params: { jobId: job.id, requestId } } as Href);
 
   return (
     <SectionCard title="Proceso del trabajo">
-      <JobProgressList rows={createCustomerProgressRows({ job, onPress: openJobProgress, payment, quote: visibleQuote })} />
+      {job.status === 'visit_proposed' ? <Card><Text style={styles.title}>Tenés una visita pendiente</Text><Text style={styles.body}>El profesional propuso una visita para el {formatDateShort(job.scheduledDate)} a las {job.scheduledTimeText?.slice(0, 5) ?? 'hora a confirmar'}.</Text><Button onPress={openVisit}>Revisar visita</Button></Card> : null}
+      <JobProgressList rows={createCustomerProgressRows({ job, onOpenVisit: openVisit, onPress: openJobProgress, payment, quote: visibleQuote })} />
       {quotesQuery.error ? <ErrorState message="No pudimos cargar el presupuesto." /> : null}
       {paymentQuery.error ? <ErrorState message="No pudimos cargar el pago." /> : null}
     </SectionCard>
   );
 }
 
-export function CustomerJobDetailScreen({ jobId }: { jobId: string }) {
-  const detailRouter = useRouter();
+export function CustomerJobVisitScreen({ jobId, requestId }: { jobId: string; requestId: string }) {
+  const visitRouter = useRouter();
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const jobQuery = useQuery({ enabled: jobId.length > 0, queryFn: () => getCustomerJobById(jobId), queryKey: customerJobByIdQueryKey(jobId) });
+  const locationQuery = useQuery({ enabled: jobId.length > 0, queryFn: () => getJobLocation(jobId), queryKey: jobLocationQueryKey(jobId) });
+  const update = (updatedJob: Job) => {
+    queryClient.setQueryData(customerJobByIdQueryKey(jobId), updatedJob);
+    queryClient.setQueryData(customerJobQueryKey(updatedJob.requestId), updatedJob);
+  };
+  const confirmMutation = useMutation({ mutationFn: () => confirmCustomerJobVisit(jobId), onSuccess: update });
+  const rejectMutation = useMutation({ mutationFn: () => rejectCustomerJobVisit(jobId), onSuccess: update });
+  const goBack = () => visitRouter.replace({ pathname: '/(customer)/requests/[id]', params: { id: requestId, jobId } } as Href);
+
+  if (!jobId) return <Screen title="Visita"><ErrorState message="No recibimos el identificador del trabajo." /><Button onPress={goBack} variant="secondary">Volver a la solicitud</Button></Screen>;
+  if (jobQuery.isPending) return <Screen title="Visita"><LoadingState message="Cargando visita..." /></Screen>;
+  if (jobQuery.error || !jobQuery.data) return <Screen title="Visita"><ErrorState message="No pudimos cargar la visita." onRetry={() => void jobQuery.refetch()} /><Button onPress={goBack} variant="secondary">Volver a la solicitud</Button></Screen>;
+  const job = jobQuery.data;
+  if (requestId && job.requestId !== requestId) return <Screen title="Visita"><ErrorState message="La visita no corresponde a esta solicitud." /><Button onPress={goBack} variant="secondary">Volver a la solicitud</Button></Screen>;
+  const hasVisit = Boolean(job.scheduledDate && job.scheduledTimeText);
+  return <Screen subtitle="Detalle de la coordinación con el profesional seleccionado." title="Visita">
+    {!hasVisit ? <EmptyState description="El profesional todavía no propuso fecha y horario." title="Sin visita propuesta" /> : <Card><InfoRow label="Fecha" value={formatDateShort(job.scheduledDate)} /><InfoRow label="Horario" value={job.scheduledTimeText?.slice(0, 5) ?? 'Sin horario'} /><InfoRow label="Dirección" value={locationQuery.data ? `${locationQuery.data.addressText} · ${formatLocation(locationQuery.data.city, locationQuery.data.province)}` : 'Cargando ubicación...'} /><InfoRow label="Notas" value={job.schedulingNotes ?? 'Sin observaciones'} /><InfoRow label="Profesional" value="Profesional seleccionado" /><InfoRow label="Estado" value={job.status === 'visit_proposed' ? 'Pendiente de tu confirmación' : job.status === 'visit_confirmed' ? 'Visita confirmada' : 'Sin confirmación pendiente'} /></Card>}
+    {error ? <Text style={styles.error}>{error}</Text> : null}
+    {job.status === 'visit_proposed' ? <View style={styles.form}><Button disabled={confirmMutation.isPending || rejectMutation.isPending} onPress={() => void confirmMutation.mutateAsync().catch((cause) => setError(getSubmissionErrorMessage(cause, 'No pudimos confirmar la visita.')))}>Confirmar visita</Button><Button disabled={confirmMutation.isPending || rejectMutation.isPending} onPress={() => void rejectMutation.mutateAsync().catch((cause) => setError(getSubmissionErrorMessage(cause, 'No pudimos rechazar la visita.')))} variant="secondary">Rechazar propuesta</Button></View> : null}
+    <Button onPress={goBack} variant="secondary">Volver a la solicitud</Button>
+  </Screen>;
+}
+
+export function CustomerJobDetailScreen({ jobId, requestId }: { jobId: string; requestId?: string | null }) {
+  const goBackToRequest = (parentRequestId: string) => router.replace({ pathname: '/(customer)/requests/[id]', params: { id: parentRequestId } } as Href);
   const jobQuery = useQuery({
     queryKey: customerJobByIdQueryKey(jobId),
     queryFn: () => getCustomerJobById(jobId),
@@ -334,9 +370,8 @@ export function CustomerJobDetailScreen({ jobId }: { jobId: string }) {
 
   if (jobQuery.isPending) {
     return (
-      <Screen scroll={false}>
+      <Screen footer={requestId ? <Button onPress={() => goBackToRequest(requestId)} variant="secondary">Volver al detalle</Button> : undefined} scroll={false}>
         <ScreenHeader
-          backAction={<CustomerJobBackButton requestId={null} router={detailRouter} />}
           subtitle="Detalle operativo del trabajo."
           title="Progreso del trabajo"
         />
@@ -347,9 +382,8 @@ export function CustomerJobDetailScreen({ jobId }: { jobId: string }) {
 
   if (jobQuery.error || !jobQuery.data) {
     return (
-      <Screen>
+      <Screen footer={requestId ? <Button onPress={() => goBackToRequest(requestId)} variant="secondary">Volver al detalle</Button> : undefined}>
         <ScreenHeader
-          backAction={<CustomerJobBackButton requestId={jobQuery.data?.requestId ?? null} router={detailRouter} />}
           subtitle="Detalle operativo del trabajo."
           title="Progreso del trabajo"
         />
@@ -359,9 +393,8 @@ export function CustomerJobDetailScreen({ jobId }: { jobId: string }) {
   }
 
   return (
-    <Screen>
+    <Screen footer={<Button onPress={() => goBackToRequest(jobQuery.data.requestId)} variant="secondary">Volver al detalle</Button>}>
       <ScreenHeader
-        backAction={<CustomerJobBackButton requestId={jobQuery.data.requestId} router={detailRouter} />}
         subtitle="Detalle operativo del trabajo."
         title="Progreso del trabajo"
       />
@@ -369,38 +402,6 @@ export function CustomerJobDetailScreen({ jobId }: { jobId: string }) {
       <Card><AttachmentGallerySection jobId={jobId} title="Evidencia del diagnóstico" type="diagnosis_evidence" /></Card>
       <Card><AttachmentGallerySection jobId={jobId} title="Evidencia de finalización" type="completion_evidence" /></Card>
     </Screen>
-  );
-}
-
-type DetailRouter = ReturnType<typeof useRouter>;
-
-function CustomerJobBackButton({
-  requestId,
-  router: detailRouter,
-}: {
-  requestId: string | null;
-  router: DetailRouter;
-}) {
-  const handleBack = () => {
-    if (detailRouter.canGoBack()) {
-      detailRouter.back();
-      return;
-    }
-
-    if (!requestId) {
-      return;
-    }
-
-    detailRouter.replace({
-      pathname: '/(customer)/requests/[id]',
-      params: { id: requestId },
-    } as Href);
-  };
-
-  return (
-    <Button onPress={handleBack} variant="ghost">
-      Volver
-    </Button>
   );
 }
 
@@ -428,6 +429,7 @@ export function CustomerJobPanel({ requestId }: { requestId: string }) {
     queryFn: () => listJobReviews(job?.id ?? ''),
     enabled: Boolean(job),
   });
+  const locationQuery = useQuery({ enabled: Boolean(job), queryFn: () => getJobLocation(job?.id ?? ''), queryKey: jobLocationQueryKey(job?.id ?? requestId) });
 
   const setJob = (updatedJob: Job) => {
     queryClient.setQueryData(customerJobQueryKey(requestId), updatedJob);
@@ -550,6 +552,7 @@ export function CustomerJobPanel({ requestId }: { requestId: string }) {
 
   return (
     <View style={styles.stack}>
+      {locationQuery.data ? <Card><InfoRow label="Dirección del trabajo" value={`${locationQuery.data.addressText} · ${formatLocation(locationQuery.data.city, locationQuery.data.province)}`} /></Card> : null}
       <Button onPress={() => router.push({ pathname: '/professional/[professionalId]', params: { jobId: job.id, professionalId: job.professionalId } })} variant="secondary">
         Ver perfil profesional
       </Button>

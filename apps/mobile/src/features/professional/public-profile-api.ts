@@ -3,6 +3,7 @@ import type { ImagePickerAsset } from 'expo-image-picker';
 import type { AvailabilityStatus, VerificationStatus } from '@casaticket/types';
 
 import { deleteAttachment, listAttachments } from '@/features/attachments/api';
+import { resolveProfileAvatarUrl } from '@/features/profile/avatar-api';
 
 async function getSupabase() {
   return (await import('@/lib/supabase')).supabase;
@@ -88,14 +89,6 @@ interface PortfolioRow {
   category?: { name: string } | Array<{ name: string }> | null;
 }
 
-async function getAvatarUrl(path: string | null): Promise<string | null> {
-  if (!path) return null;
-  const supabase = await getSupabase();
-  const { data, error } = await supabase.storage.from('profile-media').createSignedUrl(path, 900);
-  if (error) throw error;
-  return data.signedUrl;
-}
-
 export async function getPublicProfessionalProfile(professionalId: string): Promise<PublicProfessionalProfile> {
   const supabase = await getSupabase();
   const { data, error } = await supabase.rpc('get_public_professional_profile', {
@@ -109,7 +102,7 @@ export async function getPublicProfessionalProfile(professionalId: string): Prom
     userId: row.user_id,
     firstName: row.first_name,
     lastName: row.last_name,
-    avatarUrl: await getAvatarUrl(row.avatar_path),
+    avatarUrl: await resolveProfileAvatarUrl(row.avatar_path),
     baseCity: row.base_city,
     bio: row.bio,
     yearsExperience: row.years_experience,
@@ -187,11 +180,14 @@ export async function createPortfolioItem(input: {
   return mapPortfolioItem(data as PortfolioRow);
 }
 
-export async function updatePortfolioItem(itemId: string, patch: { isVisible?: boolean; sortOrder?: number }): Promise<void> {
+export async function updatePortfolioItem(itemId: string, patch: { categoryId?: string | null; description?: string; isVisible?: boolean; sortOrder?: number; title?: string }): Promise<void> {
   const supabase = await getSupabase();
-  const payload: Record<string, boolean | number | string> = { updated_at: new Date().toISOString() };
+  const payload: Record<string, boolean | number | string | null> = { updated_at: new Date().toISOString() };
   if (typeof patch.isVisible === 'boolean') payload.is_visible = patch.isVisible;
   if (typeof patch.sortOrder === 'number') payload.sort_order = patch.sortOrder;
+  if (typeof patch.title === 'string') payload.title = patch.title.trim();
+  if (typeof patch.description === 'string') payload.description = patch.description.trim();
+  if (patch.categoryId !== undefined) payload.category_id = patch.categoryId;
   const { error } = await supabase.from('professional_portfolio_items').update(payload).eq('id', itemId);
   if (error) throw error;
 }
@@ -204,7 +200,7 @@ export async function deletePortfolioItem(itemId: string): Promise<void> {
   if (error) throw error;
 }
 
-export async function uploadOwnProfessionalAvatar(asset: ImagePickerAsset): Promise<string> {
+export async function uploadOwnProfessionalAvatar(asset: ImagePickerAsset, previousPath: string | null): Promise<string> {
   const supabase = await getSupabase();
   const mimeType = asset.mimeType ?? 'image/jpeg';
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(mimeType)) throw new Error('Tipo de imagen no permitido.');
@@ -212,14 +208,22 @@ export async function uploadOwnProfessionalAvatar(asset: ImagePickerAsset): Prom
   if (userError || !userData.user) throw userError ?? new Error('Sesión no disponible.');
   const body = await (await fetch(asset.uri)).arrayBuffer();
   if (body.byteLength < 1 || body.byteLength > 5_242_880) throw new Error('La imagen debe pesar menos de 5 MB.');
-  const path = `${userData.user.id}/avatar.jpg`;
+  const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
+  const path = `avatars/${userData.user.id}/profile-${Date.now()}.${extension}`;
   const { error: uploadError } = await supabase.storage.from('profile-media').upload(path, body, {
-    contentType: 'image/jpeg',
-    upsert: true,
+    contentType: mimeType,
+    upsert: false,
   });
   if (uploadError) throw uploadError;
   const { error: profileError } = await supabase.rpc('set_own_professional_avatar', { p_avatar_path: path });
-  if (profileError) throw profileError;
+  if (profileError) {
+    await supabase.storage.from('profile-media').remove([path]);
+    throw profileError;
+  }
+  if (previousPath && previousPath !== path) {
+    const { error: cleanupError } = await supabase.storage.from('profile-media').remove([previousPath]);
+    if (cleanupError) throw new Error('La foto se actualizÃ³, pero no pudimos limpiar el archivo anterior.');
+  }
   return path;
 }
 
@@ -227,9 +231,12 @@ export async function removeOwnProfessionalAvatar(): Promise<void> {
   const supabase = await getSupabase();
   const { data: userData, error: userError } = await supabase.auth.getUser();
   if (userError || !userData.user) throw userError ?? new Error('Sesión no disponible.');
-  const path = `${userData.user.id}/avatar.jpg`;
-  const { error: storageError } = await supabase.storage.from('profile-media').remove([path]);
-  if (storageError) throw storageError;
+  const { data: profileData, error: profileReadError } = await supabase.from('profiles').select('avatar_path').eq('id', userData.user.id).single();
+  if (profileReadError) throw profileReadError;
   const { error } = await supabase.rpc('set_own_professional_avatar', { p_avatar_path: null });
   if (error) throw error;
+  if (profileData.avatar_path) {
+    const { error: storageError } = await supabase.storage.from('profile-media').remove([profileData.avatar_path]);
+    if (storageError) throw storageError;
+  }
 }
